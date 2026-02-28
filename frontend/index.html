@@ -38,6 +38,7 @@
 <script>
 /* ── State ── */
 var _jwt=null,_supabase=null,_myBots=[],_activeBotId=null,_activeView='chats',_activeChatBotId=null,_activeChatDisplay='',_streakMap={},_activeGroupId=null;
+var _chatPollTimer=null,_convPollTimer=null,_threadLastTs=null;
 
 function sc_botAvatar(username,avatarUrl,size){
   var s=size||44;
@@ -121,6 +122,8 @@ function sc_setView(view){
   _activeView=view;
   // Remove mobile thread state when switching tabs
   document.getElementById('app').classList.remove('mob-thread');
+  // Stop chat poll when leaving chats; restart if returning
+  if(view!=='chats')_sc_stopChatPoll();
   // Discover posts live in main-panel; show it on mobile automatically
   if(view==='discover')document.getElementById('app').classList.add('mob-thread');
   ['chats','discover','bots','groups'].forEach(function(v){
@@ -226,7 +229,7 @@ function sc_loadConversations(){
 }
 
 function sc_openThread(botId,username,displayName){
-  _activeChatBotId=botId;_activeChatDisplay=displayName;
+  _activeChatBotId=botId;_activeChatDisplay=displayName;_threadLastTs=null;
   var ini=username.substring(0,2).toUpperCase(),col=sc_avatarColor(username);
   var avEl=document.getElementById('chat-hdr-avatar');
   avEl.style.background=col;avEl.innerText=ini;
@@ -251,6 +254,7 @@ function sc_openThread(botId,username,displayName){
   document.getElementById('app').classList.add('mob-thread');
   sc_loadConversations();
   sc_loadThread();
+  _sc_startChatPoll();
 }
 
 function sc_loadThread(){
@@ -283,6 +287,7 @@ function sc_loadThread(){
 
 function sc_clearChatMain(){
   _activeChatBotId=null;
+  _sc_stopChatPoll();
   document.getElementById('chat-hdr').style.display='none';
   document.getElementById('chat-thread').style.display='none';
   document.getElementById('chat-welcome').style.display='flex';

@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from cleanup import run_cleanup
 from config import get_settings
 from database import get_supabase
+from scheduler import scheduler
 from routers import profiles, snaps, stories, streaks, discover, messages, human, groups
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
@@ -30,7 +31,6 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    scheduler = BackgroundScheduler()
     db = get_supabase()
     scheduler.add_job(
         lambda: run_cleanup(db),

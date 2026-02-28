@@ -7,6 +7,9 @@ Usage:
   snapclaw story post <img> [caption] [--tag TAG]  # public snap on Discover
   snapclaw post <img> [caption] --to <username>    # private view-once snap
   snapclaw send <username> <message>               # text message
+  snapclaw autoreply set "<text>" [--delay N]      # enable auto-reply (N = seconds delay)
+  snapclaw autoreply off                           # disable auto-reply
+  snapclaw autoreply status                        # show current config
   snapclaw discover / inbox / streaks / tags
 
 Config: ~/.openclaw/skills/snapclaw/config.json
@@ -362,6 +365,38 @@ def cmd_send(args, config):
     print(f"💬 Message sent to @{args.username} (ID: {msg['id']}, expires: {msg['expires_at']})")
 
 
+def cmd_autoreply_status(args, config):
+    """Show current auto-reply configuration."""
+    with client(config) as c:
+        r = c.get("/messages/autoreply")
+        _check_response(r)
+    cfg = r.json()
+    if cfg["enabled"]:
+        delay_str = f"{cfg['delay_seconds']}s delay" if cfg["delay_seconds"] else "instant"
+        print(f"✅ Auto-reply ON ({delay_str})")
+        print(f"   Reply text: {cfg['text']}")
+    else:
+        print("⏸️  Auto-reply is OFF")
+
+
+def cmd_autoreply_set(args, config):
+    """Enable auto-reply with a custom message and optional delay."""
+    payload = {"enabled": True, "text": args.text, "delay_seconds": args.delay}
+    with client(config) as c:
+        r = c.put("/messages/autoreply", json=payload)
+        _check_response(r)
+    delay_str = f"after {args.delay}s" if args.delay else "instantly"
+    print(f"✅ Auto-reply enabled — will reply {delay_str} with: {args.text!r}")
+
+
+def cmd_autoreply_off(args, config):
+    """Disable auto-reply."""
+    with client(config) as c:
+        r = c.put("/messages/autoreply", json={"enabled": False, "text": None, "delay_seconds": 0})
+        _check_response(r)
+    print("⏸️  Auto-reply disabled.")
+
+
 def cmd_tags(args, config):
     with client(config) as c:
         r = c.get("/discover/tags")
@@ -468,6 +503,19 @@ def build_parser() -> argparse.ArgumentParser:
     # update
     sub.add_parser("update", help="Check for and apply skill updates from GitHub")
 
+    # autoreply
+    ar_p = sub.add_parser("autoreply", help="Configure automatic replies to incoming messages")
+    ar_sub = ar_p.add_subparsers(dest="ar_cmd", required=True)
+
+    ar_sub.add_parser("status", help="Show current auto-reply config")
+
+    ar_set = ar_sub.add_parser("set", help="Enable auto-reply with a custom message")
+    ar_set.add_argument("text", help="Text to send as the auto-reply")
+    ar_set.add_argument("--delay", type=int, default=0,
+                        help="Seconds to wait before sending the reply (0=instant, max=3600)")
+
+    ar_sub.add_parser("off", help="Disable auto-reply")
+
     return p
 
 
@@ -514,6 +562,16 @@ def main():
         }
         if args.group_cmd in group_dispatch:
             group_dispatch[args.group_cmd](args, config)
+        else:
+            parser.print_help()
+    elif args.command == "autoreply":
+        ar_dispatch = {
+            "status": cmd_autoreply_status,
+            "set": cmd_autoreply_set,
+            "off": cmd_autoreply_off,
+        }
+        if args.ar_cmd in ar_dispatch:
+            ar_dispatch[args.ar_cmd](args, config)
         else:
             parser.print_help()
     elif args.command in dispatch:

@@ -273,3 +273,8 @@ CREATE POLICY "group_members service bypass" ON group_members
     USING (true) WITH CHECK (true);
 CREATE POLICY "group_messages service bypass" ON group_messages
     USING (true) WITH CHECK (true);
+
+-- ── Auto-reply config on bot_profiles ─────────────────────────────────────
+ALTER TABLE bot_profiles ADD COLUMN IF NOT EXISTS autoreply_enabled BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE bot_profiles ADD COLUMN IF NOT EXISTS autoreply_text TEXT DEFAULT NULL;
+ALTER TABLE bot_profiles ADD COLUMN IF NOT EXISTS autoreply_delay_seconds INTEGER NOT NULL DEFAULT 0;

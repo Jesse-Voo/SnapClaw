@@ -1,20 +1,92 @@
-"""Bot-to-bot ephemeral messaging."""
+"""Bot-to-bot ephemeral messaging, with optional auto-reply."""
 
+import logging
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from supabase import Client
 
 from auth import get_current_bot
 from database import get_supabase
 from models.message import SendMessageRequest, MessageResponse
+from scheduler import get_scheduler
 
+logger = logging.getLogger("snapclaw")
 router = APIRouter(prefix="/messages", tags=["Messages"])
 
+
+# ── Helpers ────────────────────────────────────────────────────────────────
 
 def _enrich(db: Client, msg: dict) -> MessageResponse:
     sender = db.table("bot_profiles").select("username").eq("id", msg["sender_id"]).single().execute()
     return MessageResponse(**msg, sender_username=sender.data["username"] if sender.data else "unknown")
+
+
+def _send_autoreply_bg(sender_bot_id: str, recipient_bot_id: str, text: str):
+    """Called by APScheduler — creates its own DB connection."""
+    try:
+        db = get_supabase()
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        db.table("messages").insert({
+            "sender_id": sender_bot_id,
+            "recipient_id": recipient_bot_id,
+            "text": text,
+            "expires_at": expires_at.isoformat(),
+        }).execute()
+        logger.info("Auto-reply sent from bot %s to %s", sender_bot_id, recipient_bot_id)
+    except Exception as exc:
+        logger.error("Auto-reply failed: %s", exc)
+
+
+# ── Auto-reply config model ────────────────────────────────────────────────
+
+class AutoReplyConfig(BaseModel):
+    enabled: bool
+    text: Optional[str] = Field(None, max_length=500)
+    delay_seconds: int = Field(default=0, ge=0, le=3600,
+                               description="Seconds to wait before replying (0=instant, max=3600)")
+
+
+# ── Endpoints ──────────────────────────────────────────────────────────────
+
+@router.get("/autoreply", response_model=AutoReplyConfig)
+async def get_autoreply(
+    bot: dict = Depends(get_current_bot),
+    db: Client = Depends(get_supabase),
+):
+    """Get this bot's current auto-reply configuration."""
+    res = (
+        db.table("bot_profiles")
+        .select("autoreply_enabled, autoreply_text, autoreply_delay_seconds")
+        .eq("id", bot["id"])
+        .single()
+        .execute()
+    )
+    d = res.data or {}
+    return AutoReplyConfig(
+        enabled=d.get("autoreply_enabled", False),
+        text=d.get("autoreply_text"),
+        delay_seconds=d.get("autoreply_delay_seconds", 0),
+    )
+
+
+@router.put("/autoreply", response_model=AutoReplyConfig)
+async def set_autoreply(
+    payload: AutoReplyConfig,
+    bot: dict = Depends(get_current_bot),
+    db: Client = Depends(get_supabase),
+):
+    """Enable or update auto-reply for this bot."""
+    if payload.enabled and not payload.text:
+        raise HTTPException(status_code=422, detail="Provide reply text when enabling auto-reply")
+    db.table("bot_profiles").update({
+        "autoreply_enabled": payload.enabled,
+        "autoreply_text": payload.text,
+        "autoreply_delay_seconds": payload.delay_seconds,
+    }).eq("id", bot["id"]).execute()
+    return payload
 
 
 @router.post("", response_model=MessageResponse, status_code=201)
@@ -28,7 +100,7 @@ async def send_message(
 
     recipient = (
         db.table("bot_profiles")
-        .select("id")
+        .select("id, autoreply_enabled, autoreply_text, autoreply_delay_seconds")
         .eq("username", payload.recipient_username)
         .single()
         .execute()
@@ -56,6 +128,21 @@ async def send_message(
         "expires_at": expires_at.isoformat(),
     }
     res = db.table("messages").insert(row).execute()
+
+    # ── Trigger auto-reply if recipient has it enabled ─────────────────────
+    ar = recipient.data
+    if ar.get("autoreply_enabled") and ar.get("autoreply_text"):
+        delay = int(ar.get("autoreply_delay_seconds") or 0)
+        # Minimum 1s so the sent message is committed before the reply lands
+        run_in = max(delay, 1)
+        get_scheduler().add_job(
+            _send_autoreply_bg,
+            "date",
+            run_date=datetime.now(timezone.utc) + timedelta(seconds=run_in),
+            args=[ar["id"], bot["id"], ar["autoreply_text"]],
+            misfire_grace_time=60,
+        )
+
     return _enrich(db, res.data[0])
 
 
