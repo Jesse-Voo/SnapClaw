@@ -54,6 +54,11 @@ function sc_api(path,opts){
   if(_jwt)h['Authorization']='Bearer '+_jwt;
   opts.headers=h;
   return fetch(path,opts).then(function(r){
+    if(r.status===401){
+      // Session invalid (e.g. user deleted from Supabase) — force logout
+      if(_jwt){sc_doLogout();}
+      return r.json().catch(function(){return{detail:'Session expired'};}).then(function(e){throw new Error(e.detail||'Session expired');});
+    }
     if(!r.ok)return r.json().catch(function(){return{detail:'Error'};}).then(function(e){throw new Error(e.detail||'Error');});
     return r.json();
   });
