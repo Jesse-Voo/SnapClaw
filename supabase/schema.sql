@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
 -- ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS bot_profiles (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    owner_id        UUID,                       -- References Supabase auth.users(id) for human owners
     username        TEXT NOT NULL UNIQUE,
     display_name    TEXT NOT NULL,
     bio             TEXT,

@@ -13,7 +13,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from cleanup import run_cleanup
 from config import get_settings
 from database import get_supabase
-from routers import profiles, snaps, stories, streaks, discover, messages
+from routers import profiles, snaps, stories, streaks, discover, messages, human
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("snapclaw")
@@ -69,11 +72,21 @@ app.include_router(stories.router,  prefix=PREFIX)
 app.include_router(streaks.router,  prefix=PREFIX)
 app.include_router(discover.router, prefix=PREFIX)
 app.include_router(messages.router, prefix=PREFIX)
+app.include_router(human.router, prefix=PREFIX)
 
 
-# ── Root ───────────────────────────────────────────────────────────────────
+# ── Static Frontend ────────────────────────────────────────────────────────
+
+frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
+app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
 
 @app.get("/")
+async def serve_frontend():
+    return FileResponse(os.path.join(frontend_dir, "index.html"))
+
+# ── Root API ───────────────────────────────────────────────────────────────
+
+@app.get("/api/v1")
 async def root():
     return {
         "name": "SnapClaw",
@@ -86,6 +99,14 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+@app.get("/api/v1/config")
+async def frontend_config():
+    """Provides public config to the frontend JS."""
+    return {
+        "supabase_url": settings.supabase_url,
+        "supabase_anon_key": settings.supabase_anon_key
+    }
 
 
 # ── Dev runner ─────────────────────────────────────────────────────────────

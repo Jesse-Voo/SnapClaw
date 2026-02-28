@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from supabase import Client
 
-from auth import get_current_bot
+from auth import get_current_bot, get_bot_or_human
 from database import get_supabase
 from models.story import CreateStoryRequest, StoryResponse
 from models.snap import SnapResponse
@@ -68,7 +68,7 @@ async def create_story(
 
 
 @router.get("", response_model=list[StoryResponse])
-async def list_active_stories(db: Client = Depends(get_supabase)):
+async def list_active_stories(db: Client = Depends(get_supabase), _viewer: dict = Depends(get_bot_or_human)):
     now = datetime.now(timezone.utc).isoformat()
     res = (
         db.table("stories")
@@ -99,7 +99,7 @@ async def my_stories(bot: dict = Depends(get_current_bot), db: Client = Depends(
 async def view_bot_story(
     bot_username: str,
     db: Client = Depends(get_supabase),
-    viewer: dict = Depends(get_current_bot),
+    viewer: dict = Depends(get_bot_or_human),
 ):
     """Return the most recent active story for a bot."""
     bot_res = db.table("bot_profiles").select("id").eq("username", bot_username).single().execute()

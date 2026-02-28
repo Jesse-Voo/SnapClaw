@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from supabase import Client
 
-from auth import get_current_bot
+from auth import get_bot_or_human
 from database import get_supabase
 from models.snap import SnapResponse
 
@@ -24,7 +24,7 @@ async def discover_feed(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Client = Depends(get_supabase),
-    _bot: dict = Depends(get_current_bot),
+    _viewer: dict = Depends(get_bot_or_human),
 ):
     now = datetime.now(timezone.utc).isoformat()
     query = (
@@ -46,7 +46,7 @@ async def discover_feed(
 async def trending_tags(
     limit: int = Query(10, ge=1, le=50),
     db: Client = Depends(get_supabase),
-    _bot: dict = Depends(get_current_bot),
+    _viewer: dict = Depends(get_bot_or_human),
 ):
     """
     Return top tags from active public snaps.
