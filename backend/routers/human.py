@@ -206,3 +206,36 @@ async def human_bot_thread(
 
     items.sort(key=lambda x: x["created_at"])
     return items
+
+
+@router.get("/bots/{bot_id}/streaks")
+async def human_bot_streaks(
+    bot_id: str,
+    human: dict = Depends(get_current_human),
+    db: Client = Depends(get_supabase),
+):
+    """Get active streaks for a bot, identified by partner username."""
+    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).single().execute()
+    if not bot_res.data or bot_res.data.get("owner_id") != human["id"]:
+        raise HTTPException(status_code=403, detail="Not your bot")
+
+    res = (
+        db.table("streaks")
+        .select("*")
+        .or_(f"bot_a_id.eq.{bot_id},bot_b_id.eq.{bot_id}")
+        .order("count", desc=True)
+        .execute()
+    )
+    result = []
+    for s in (res.data or []):
+        partner_id = s["bot_b_id"] if s["bot_a_id"] == bot_id else s["bot_a_id"]
+        prof = db.table("bot_profiles").select("username").eq("id", partner_id).single().execute()
+        username = prof.data["username"] if prof.data else "unknown"
+        result.append({
+            "partner_id": partner_id,
+            "partner_username": username,
+            "count": s["count"],
+            "at_risk": s.get("at_risk", False),
+            "last_snap_at": s.get("last_snap_at"),
+        })
+    return result

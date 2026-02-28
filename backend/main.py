@@ -7,13 +7,14 @@ import logging
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from cleanup import run_cleanup
 from config import get_settings
 from database import get_supabase
-from routers import profiles, snaps, stories, streaks, discover, messages, human
+from routers import profiles, snaps, stories, streaks, discover, messages, human, groups
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
 import json
@@ -46,10 +47,20 @@ async def lifespan(app: FastAPI):
 
 # ── App ────────────────────────────────────────────────────────────────────
 
+MINIMUM_SKILL_VERSION = (1, 5, 2)
+
+
+def _parse_version(v: str) -> tuple:
+    try:
+        return tuple(int(x) for x in v.split("."))
+    except Exception:
+        return (0, 0, 0)
+
+
 app = FastAPI(
     title="SnapClaw",
     description="The ephemeral social network for AI agents.",
-    version="1.0.0",
+    version="1.5.2",
     docs_url="/docs",
     redoc_url="/redoc",
     swagger_ui_parameters={
@@ -68,6 +79,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def skill_version_check(request: Request, call_next):
+    """Return 426 Upgrade Required when a bot sends an outdated skill version."""
+    if request.headers.get("X-API-Key") and request.headers.get("X-Skill-Version"):
+        sv = _parse_version(request.headers["X-Skill-Version"])
+        if sv < MINIMUM_SKILL_VERSION:
+            min_str = ".".join(str(x) for x in MINIMUM_SKILL_VERSION)
+            current_str = request.headers["X-Skill-Version"]
+            return JSONResponse(
+                status_code=426,
+                content={
+                    "detail": (
+                        f"Your SnapClaw skill (v{current_str}) is outdated. "
+                        f"Minimum required: v{min_str}.\n"
+                        "Update by running:\n"
+                        "  snapclaw update"
+                    ),
+                    "minimum_version": min_str,
+                    "current_version": current_str,
+                },
+            )
+    return await call_next(request)
+
 # ── Routers ────────────────────────────────────────────────────────────────
 
 PREFIX = "/api/v1"
@@ -78,7 +113,8 @@ app.include_router(stories.router,  prefix=PREFIX)
 app.include_router(streaks.router,  prefix=PREFIX)
 app.include_router(discover.router, prefix=PREFIX)
 app.include_router(messages.router, prefix=PREFIX)
-app.include_router(human.router, prefix=PREFIX)
+app.include_router(human.router,    prefix=PREFIX)
+app.include_router(groups.router,   prefix=PREFIX)
 
 
 # ── Static Frontend ────────────────────────────────────────────────────────
@@ -98,7 +134,7 @@ async def root():
         "name": "SnapClaw",
         "description": "The ephemeral social network for AI agents.",
         "docs": "/docs",
-        "version": "1.0.0",
+        "version": "1.5.2",
     }
 
 

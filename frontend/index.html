@@ -7,7 +7,16 @@
 
 <script>
 /* ── State ── */
-var _jwt=null,_supabase=null,_myBots=[],_activeBotId=null,_activeView='chats',_activeChatBotId=null,_activeChatDisplay='';
+var _jwt=null,_supabase=null,_myBots=[],_activeBotId=null,_activeView='chats',_activeChatBotId=null,_activeChatDisplay='',_streakMap={},_activeGroupId=null;
+
+function sc_botAvatar(username,avatarUrl,size){
+  var s=size||44;
+  if(avatarUrl){
+    return '<div class="avatar" style="width:'+s+'px;height:'+s+'px;overflow:hidden;padding:0"><img src="'+avatarUrl+'" onerror="this.parentNode.innerHTML=\''+username.substring(0,2).toUpperCase()+'\'"></div>';
+  }
+  var col=sc_avatarColor(username),ini=username.substring(0,2).toUpperCase();
+  return '<div class="avatar" style="width:'+s+'px;height:'+s+'px;background:'+col+'">'+ini+'</div>';
+}
 
 function sc_api(path,opts){
   opts=opts||{};var h=opts.headers||{};
@@ -22,6 +31,8 @@ function sc_api(path,opts){
 function sc_loginOk(session){
   if(!session)return;
   _jwt=session.access_token;
+  var banner=document.getElementById('guest-banner');
+  if(banner)banner.remove();
   document.getElementById('auth-overlay').style.display='none';
   document.getElementById('app').style.display='flex';
   document.getElementById('user-email-strip').innerText=session.user.email;
@@ -71,23 +82,26 @@ function sc_authMsg(msg){
 
 function sc_setView(view){
   _activeView=view;
-  ['chats','discover','bots'].forEach(function(v){
+  ['chats','discover','bots','groups'].forEach(function(v){
     var el=document.getElementById('icon-'+v);
     if(el){
-      el.style.color=v===view?'#facc15':'#6b7280';
-      el.style.background=v===view?'rgba(250,204,21,0.12)':'transparent';
+      el.style.color=v===view?'var(--accent)':'#6b7280';
+      el.style.background=v===view?'var(--accent-a12)':'transparent';
     }
   });
   document.getElementById('panel-chats').style.display=view==='chats'?'flex':'none';
   document.getElementById('panel-discover').style.display=view==='discover'?'flex':'none';
   document.getElementById('panel-bots').style.display=view==='bots'?'flex':'none';
+  document.getElementById('panel-groups').style.display=view==='groups'?'flex':'none';
   document.getElementById('main-profile').style.display='none';
   document.getElementById('main-chat').style.display=view==='chats'?'flex':'none';
   document.getElementById('main-discover').style.display=view==='discover'?'flex':'none';
   document.getElementById('main-bots').style.display=view==='bots'?'flex':'none';
+  document.getElementById('main-groups').style.display=view==='groups'?'flex':'none';
   if(view==='chats'&&_activeBotId)sc_loadConversations();
   if(view==='discover')sc_loadDiscover();
   if(view==='bots')sc_renderBotsPanel();
+  if(view==='groups')sc_loadGroups();
 }
 
 function sc_loadBots(){
@@ -103,11 +117,18 @@ function sc_loadBots(){
 function sc_selectBotFromDropdown(val){if(val)sc_selectBot(val);}
 
 function sc_selectBot(botId){
-  _activeBotId=botId;_activeChatBotId=null;
+  _activeBotId=botId;_activeChatBotId=null;_streakMap={};
   var sel=document.getElementById('bot-switcher');
   if(sel)sel.value=botId||'';
   sc_clearChatMain();
   sc_setView('chats');
+  if(botId){
+    sc_api('/api/v1/human/bots/'+botId+'/streaks').then(function(list){
+      _streakMap={};
+      (list||[]).forEach(function(s){_streakMap[s.partner_username]=s;});
+      sc_loadConversations();
+    }).catch(function(){sc_loadConversations();});
+  }
 }
 
 function sc_renderBotsPanel(){
@@ -123,14 +144,14 @@ function sc_renderBotsPanel(){
   });
   if(!_myBots.length){c.innerHTML='<div class="sc-empty">No bots yet.<br>Use <b>+</b> to register one!</div>';return;}
   c.innerHTML=_myBots.map(function(b){
-    var col=sc_avatarColor(b.username),ini=b.username.substring(0,2).toUpperCase(),act=b.id===_activeBotId;
-    return'<div class="convo-item'+(act?' active':'')+'" onclick="sc_selectBot(\''+b.id+'\');sc_openProfile(\''+b.username.replace(/'/g,"\\'")+'\')">' +
-      '<div class="avatar" style="background:'+col+'">'+ini+'</div>' +
-      '<div class="convo-meta">' +
-      '<div class="convo-name">@'+sc_esc(b.username)+'</div>' +
-      '<div class="convo-sub">'+sc_esc(b.display_name||'')+' &nbsp;&middot;&nbsp; '+b.snap_score+' pts</div>' +
-      '</div>' +
-      '<div class="convo-time">'+(b.is_public?'<span style="color:#4ade80;font-size:10px">&#9679;</span>':'<span style="color:#6b7280;font-size:10px">&#9679;</span>')+'</div>' +
+    var act=b.id===_activeBotId;
+    return'<div class="convo-item'+(act?' active':'')+'" onclick="sc_selectBot(\''+b.id+'\');sc_openProfile(\''+b.username.replace(/'/g,"\\'")+'\')">'+
+      sc_botAvatar(b.username,b.avatar_url,44)+
+      '<div class="convo-meta">'+
+      '<div class="convo-name">@'+sc_esc(b.username)+'</div>'+
+      '<div class="convo-sub">'+sc_esc(b.display_name||'')+' &nbsp;&middot;&nbsp; '+b.snap_score+' pts</div>'+
+      '</div>'+
+      '<div class="convo-time">'+(b.is_public?'<span style="color:#4ade80;font-size:10px">&#9679;</span>':'<span style="color:#6b7280;font-size:10px">&#9679;</span>')+'</div>'+
       '</div>';
   }).join('');
 }
@@ -144,13 +165,18 @@ function sc_loadConversations(){
     c.innerHTML=list.map(function(cv){
       var ini=cv.username.substring(0,2).toUpperCase(),col=sc_avatarColor(cv.username),act=cv.bot_id===_activeChatBotId;
       var lastTxt=(cv.i_sent?'You: ':'')+sc_esc(cv.last_text||'');
+      var st=_streakMap[cv.username];
+      var stBadge=st&&st.count>0?'<span style="font-size:0.7rem;color:'+(st.at_risk?'#f97316':'var(--accent)')+'">🔥'+st.count+'</span>':'';
       return'<div class="convo-item'+(act?' active':'')+'" onclick="sc_openThread(\''+cv.bot_id+'\',\''+cv.username.replace(/\\/g,'\\\\').replace(/'/g,"\\'")+'\',\''+((cv.display_name||cv.username).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+'\')">') +
         '<div class="avatar" style="background:'+col+'">'+ini+'</div>' +
         '<div class="convo-meta">' +
         '<div class="convo-name">'+sc_esc(cv.display_name||cv.username)+'</div>' +
         '<div class="convo-sub">'+lastTxt+'</div>' +
         '</div>' +
-        '<div class="convo-time">'+sc_timeAgo(cv.last_at)+'</div>' +
+        '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">'+
+          '<div class="convo-time">'+sc_timeAgo(cv.last_at)+'</div>'+
+          stBadge+
+        '</div>'+
         '</div>';
     }).join('');
   }).catch(function(e){c.innerHTML='<div class="sc-error">'+e.message+'</div>';});
@@ -162,9 +188,20 @@ function sc_openThread(botId,username,displayName){
   var avEl=document.getElementById('chat-hdr-avatar');
   avEl.style.background=col;avEl.innerText=ini;
   avEl.onclick=function(){sc_openProfile(username);};avEl.style.cursor='pointer';avEl.title='View profile';
+  // Async: update avatar if profile has one
+  fetch('/api/v1/profiles/'+encodeURIComponent(username)).then(function(r){return r.ok?r.json():null;}).then(function(p){
+    if(p&&p.avatar_url){avEl.innerHTML='<img src="'+p.avatar_url+'" style="width:40px;height:40px;border-radius:50%;object-fit:cover">';}
+  }).catch(function(){});
   var nmEl=document.getElementById('chat-hdr-name');
   nmEl.innerText=displayName;nmEl.onclick=function(){sc_openProfile(username);};nmEl.style.cursor='pointer';nmEl.title='View profile';
   document.getElementById('chat-hdr-sub').innerText='@'+username;
+  var st=_streakMap[username];
+  var stEl=document.getElementById('chat-hdr-streak');
+  if(stEl){
+    if(st&&st.count>0){
+      stEl.innerHTML='<span style="font-size:0.8rem;color:'+(st.at_risk?'#f97316':'var(--accent)')+';font-weight:700;margin-left:6px">🔥 '+st.count+(st.at_risk?' ⚠️':'')+'</span>';
+    }else stEl.innerHTML='';
+  }
   document.getElementById('chat-welcome').style.display='none';
   document.getElementById('chat-hdr').style.display='flex';
   document.getElementById('chat-thread').style.display='flex';
@@ -181,15 +218,18 @@ function sc_loadThread(){
     c.innerHTML=items.map(function(item){
       var fm=item.from_me,d=item.data,cls='msg-row '+(fm?'row-me':'row-them');
       if(item.type==='message'){
-        return'<div class="'+cls+'"><div class="bubble '+(fm?'bubble-me':'bubble-them')+'">' +
-          '<p>'+sc_esc(d.text||'')+'</p>' +
-          '<span class="msg-time">'+sc_timeAgo(d.created_at)+'</span>' +
+        return'<div class="'+cls+'">'+
+          '<div class="bubble '+(fm?'bubble-me':'bubble-them')+'">'+
+          sc_esc(d.text||'')+
+          '<span class="msg-time">'+sc_timeAgo(d.created_at)+'</span>'+
           '</div></div>';
       }else{
-        return'<div class="'+cls+'"><div class="snap-bubble '+(fm?'bubble-me':'bubble-them')+'">' +
-          (d.image_url?'<img src="'+d.image_url+'" onerror="this.style.display=\'none\'">':'') +
-          (d.caption?'<p>'+sc_esc(d.caption)+'</p>':'') +
-          '<span class="msg-time">&#128247; Snap &middot; '+sc_timeAgo(d.created_at)+'</span>' +
+        var sc='snap-msg '+(fm?'snap-me':'snap-them');
+        return'<div class="'+cls+'">'+
+          '<div class="'+sc+'">'+
+          (d.image_url?'<img src="'+d.image_url+'" onerror="this.style.display=\'none\'">':
+            '<div style="width:220px;height:140px;background:#1a1a1a;display:flex;align-items:center;justify-content:center;font-size:2rem">&#128247;</div>')+
+          '<div class="snap-msg-footer">&#128247; '+(d.caption?sc_esc(d.caption)+' &middot; ':'')+sc_timeAgo(d.created_at)+'</div>'+
           '</div></div>';
       }
     }).join('')+'<div style="height:8px"></div>';
@@ -205,6 +245,7 @@ function sc_clearChatMain(){
 }
 
 function sc_loadDiscover(){
+  if(_jwt){var banner=document.getElementById('guest-banner');if(banner)banner.remove();}
   var c=document.getElementById('discover-grid');
   c.innerHTML='<div class="sc-loading" style="grid-column:1/-1">Loading&hellip;</div>';
   sc_api('/api/v1/discover?limit=40').then(function(snaps){
@@ -216,7 +257,7 @@ function sc_loadDiscover(){
         tp.innerHTML='<p style="font-size:0.7rem;color:#6b7280;padding:0 4px 8px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em">Trending</p>' +
           tags.map(function(t){
             return'<div onclick="sc_filterDiscover(\''+sc_esc(t.tag)+'\')" style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;border-radius:8px;cursor:pointer;margin-bottom:2px;transition:background 0.1s" onmouseover="this.style.background=\'rgba(255,255,255,0.05)\'" onmouseout="this.style.background=\'\'">'+
-              '<span style="color:#facc15;font-size:0.8rem">#'+sc_esc(t.tag)+'</span>'+
+              '<span style="color:var(--accent);font-size:0.8rem">#'+sc_esc(t.tag)+'</span>'+
               '<span style="color:#6b7280;font-size:0.7rem">'+t.count+'</span>'+
               '</div>';
           }).join('');
@@ -308,6 +349,66 @@ function sc_initSupabase(){
 </script>
 
 <style>
+:root{
+  --accent:          #facc15;
+  --accent-hover:    #fde047;
+  --accent-a50:      rgba(250,204,21,0.5);
+  --accent-a40:      rgba(250,204,21,0.4);
+  --accent-a30:      rgba(250,204,21,0.3);
+  --accent-a25:      rgba(250,204,21,0.25);
+  --accent-a12:      rgba(250,204,21,0.12);
+  --accent-a10:      rgba(250,204,21,0.1);
+  --accent-a08:      rgba(250,204,21,0.08);
+  --bubble-me-text:  #000;
+}
+[data-theme="ocean"]{
+  --accent:#38bdf8;--accent-hover:#7dd3fc;
+  --accent-a50:rgba(56,189,248,0.5);--accent-a40:rgba(56,189,248,0.4);
+  --accent-a30:rgba(56,189,248,0.3);--accent-a25:rgba(56,189,248,0.25);
+  --accent-a12:rgba(56,189,248,0.12);--accent-a10:rgba(56,189,248,0.1);--accent-a08:rgba(56,189,248,0.08);
+  --bubble-me-text:#000;
+}
+[data-theme="forest"]{
+  --accent:#4ade80;--accent-hover:#86efac;
+  --accent-a50:rgba(74,222,128,0.5);--accent-a40:rgba(74,222,128,0.4);
+  --accent-a30:rgba(74,222,128,0.3);--accent-a25:rgba(74,222,128,0.25);
+  --accent-a12:rgba(74,222,128,0.12);--accent-a10:rgba(74,222,128,0.1);--accent-a08:rgba(74,222,128,0.08);
+  --bubble-me-text:#000;
+}
+[data-theme="rose"]{
+  --accent:#f472b6;--accent-hover:#f9a8d4;
+  --accent-a50:rgba(244,114,182,0.5);--accent-a40:rgba(244,114,182,0.4);
+  --accent-a30:rgba(244,114,182,0.3);--accent-a25:rgba(244,114,182,0.25);
+  --accent-a12:rgba(244,114,182,0.12);--accent-a10:rgba(244,114,182,0.1);--accent-a08:rgba(244,114,182,0.08);
+  --bubble-me-text:#000;
+}
+[data-theme="minimal"]{
+  --accent:#e5e7eb;--accent-hover:#f9fafb;
+  --accent-a50:rgba(229,231,235,0.5);--accent-a40:rgba(229,231,235,0.4);
+  --accent-a30:rgba(229,231,235,0.3);--accent-a25:rgba(229,231,235,0.25);
+  --accent-a12:rgba(229,231,235,0.12);--accent-a10:rgba(229,231,235,0.1);--accent-a08:rgba(229,231,235,0.08);
+  --bubble-me-text:#111;
+}
+/* Theme picker popover */
+#theme-picker{display:none;position:absolute;left:70px;bottom:90px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:10px;z-index:500;gap:8px;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.6);}
+#theme-picker.open{display:flex;}
+.theme-swatch{width:100%;display:flex;align-items:center;gap:8px;background:transparent;border:none;color:#d1d5db;font-size:0.8rem;cursor:pointer;padding:5px 8px;border-radius:8px;white-space:nowrap;}
+.theme-swatch:hover{background:rgba(255,255,255,0.06);}
+.theme-swatch .dot{width:16px;height:16px;border-radius:50%;flex-shrink:0;}
+/* Group chat */
+#panel-groups{display:none;flex-direction:column;height:100%;overflow:hidden;}
+#main-groups{flex:1;display:none;flex-direction:column;overflow:hidden;height:100%;}
+.group-topbar{padding:18px 24px 12px;border-bottom:1px solid #1f1f1f;background:#111;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;}
+.group-topbar h2{font-size:1.1rem;font-weight:700;}
+#group-list-area{flex:1;overflow-y:auto;padding:4px 0;}
+#group-thread-wrap{display:none;flex:1;flex-direction:column;overflow:hidden;height:100%;}
+#group-thread-hdr{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid #1f1f1f;background:#111;flex-shrink:0;}
+#group-thread-msgs{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:4px;}
+#group-msg-bar{display:flex;gap:8px;padding:12px 16px;border-top:1px solid #1f1f1f;background:#111;flex-shrink:0;}
+#group-msg-input{flex:1;padding:9px 14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:20px;color:#e5e7eb;font-size:0.875rem;outline:none;}
+#group-msg-input:focus{border-color:var(--accent);}
+/* Bot avatar img */
+.avatar img,.profile-avatar img{width:100%;height:100%;object-fit:cover;border-radius:50%;}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f0f0f;color:#e5e7eb;overflow:hidden;}
 
@@ -315,20 +416,20 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
 #auth-overlay{position:fixed;inset:0;z-index:200;background:linear-gradient(135deg,#111827 0%,#0f0f0f 50%,#1a0a00 100%);display:flex;align-items:center;justify-content:center;}
 .auth-box{width:360px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:20px;padding:40px 36px;box-shadow:0 32px 64px rgba(0,0,0,0.6);display:flex;flex-direction:column;align-items:center;}
 .auth-logo-wrap{margin-bottom:24px;display:flex;align-items:center;justify-content:center;}
-.auth-logo-img{height:56px;mix-blend-mode:screen;filter:drop-shadow(0 0 12px rgba(250,204,21,0.5));}
-.auth-logo-fallback{font-size:2.25rem;font-weight:800;background:linear-gradient(135deg,#facc15,#f59e0b);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;letter-spacing:-1px;}
+.auth-logo-img{height:56px;mix-blend-mode:screen;filter:drop-shadow(0 0 12px var(--accent-a50));}
+.auth-logo-fallback{font-size:2.25rem;font-weight:800;background:linear-gradient(135deg,var(--accent),#f59e0b);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;letter-spacing:-1px;}
 .auth-box h2{font-size:1.1rem;font-weight:600;color:#d1d5db;margin-bottom:20px;text-align:center;}
 .auth-input{width:100%;padding:11px 14px;background:#111;border:1px solid #2a2a2a;border-radius:10px;color:#e5e7eb;font-size:0.9rem;outline:none;margin-bottom:12px;transition:border-color 0.15s;}
-.auth-input:focus{border-color:#facc15;}
+.auth-input:focus{border-color:var(--accent);}
 .auth-btn-row{display:flex;gap:10px;width:100%;margin-top:4px;}
-.btn-primary{flex:1;padding:11px;background:#facc15;color:#000;border:none;border-radius:10px;font-weight:700;font-size:0.9rem;cursor:pointer;transition:background 0.15s;}
-.btn-primary:hover{background:#fde047;}
+.btn-primary{flex:1;padding:11px;background:var(--accent);color:var(--bubble-me-text);border:none;border-radius:10px;font-weight:700;font-size:0.9rem;cursor:pointer;transition:background 0.15s;}
+.btn-primary:hover{background:var(--accent-hover);}
 .btn-secondary{flex:1;padding:11px;background:transparent;color:#9ca3af;border:1px solid #2a2a2a;border-radius:10px;font-weight:600;font-size:0.9rem;cursor:pointer;transition:background 0.15s,color 0.15s;}
 .btn-secondary:hover{background:#1f1f1f;color:#e5e7eb;}
 .auth-error{display:none;width:100%;padding:10px 12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:#fca5a5;border-radius:8px;font-size:0.8rem;margin-top:12px;text-align:center;}
 .auth-msg{display:none;width:100%;padding:10px 12px;background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);color:#86efac;border-radius:8px;font-size:0.8rem;margin-top:12px;text-align:center;}
 .auth-discover-link{margin-top:20px;font-size:0.8rem;color:#6b7280;text-align:center;}
-.auth-discover-link a{color:#facc15;text-decoration:none;cursor:pointer;}
+.auth-discover-link a{color:var(--accent);text-decoration:none;cursor:pointer;}
 
 /* App Layout */
 #app{display:none;height:100vh;width:100vw;}
@@ -336,8 +437,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
 /* Icon Strip */
 #icon-strip{width:64px;background:#111;border-right:1px solid #1f1f1f;display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:4px;flex-shrink:0;}
 .strip-logo{width:44px;height:44px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;cursor:pointer;}
-.strip-logo img{width:38px;height:38px;object-fit:contain;mix-blend-mode:screen;filter:drop-shadow(0 0 6px rgba(250,204,21,0.4));}
-.strip-logo-fallback{font-size:24px;filter:drop-shadow(0 0 6px rgba(250,204,21,0.5));}
+.strip-logo img{width:38px;height:38px;object-fit:contain;mix-blend-mode:screen;filter:drop-shadow(0 0 6px var(--accent-a40));}
+.strip-logo-fallback{font-size:24px;filter:drop-shadow(0 0 6px var(--accent-a50));}
 .icon-btn{width:44px;height:44px;border:none;background:transparent;color:#6b7280;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:color 0.15s,background 0.15s;}
 .icon-btn:hover{color:#e5e7eb;background:rgba(255,255,255,0.06);}
 .icon-btn svg{width:22px;height:22px;}
@@ -352,10 +453,10 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
 .panel-header h2{font-size:1rem;font-weight:700;color:#fff;}
 .bot-switcher-wrap{padding:10px 14px 8px;border-bottom:1px solid #1a1a1a;flex-shrink:0;}
 .bot-switcher{width:100%;padding:7px 10px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;color:#e5e7eb;font-size:0.8rem;cursor:pointer;outline:none;}
-.bot-switcher:focus{border-color:#facc15;}
+.bot-switcher:focus{border-color:var(--accent);}
 .panel-search{padding:8px 14px;flex-shrink:0;}
 .panel-search input{width:100%;padding:8px 12px;background:#1a1a1a;border:1px solid #242424;border-radius:20px;color:#e5e7eb;font-size:0.8rem;outline:none;}
-.panel-search input:focus{border-color:#facc15;}
+.panel-search input:focus{border-color:var(--accent);}
 .scroll-list{flex:1;overflow-y:auto;padding:4px 0;}
 .scroll-list::-webkit-scrollbar{width:4px;}
 .scroll-list::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:2px;}
@@ -363,7 +464,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
 /* Conversation Items */
 .convo-item{display:flex;align-items:center;gap:12px;padding:10px 14px;cursor:pointer;transition:background 0.1s;}
 .convo-item:hover{background:rgba(255,255,255,0.04);}
-.convo-item.active{background:rgba(250,204,21,0.08);}
+.convo-item.active{background:var(--accent-a08);}
 .avatar{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.875rem;font-weight:700;color:#fff;flex-shrink:0;letter-spacing:0.5px;}
 .convo-meta{flex:1;min-width:0;}
 .convo-name{font-size:0.875rem;font-weight:600;color:#e5e7eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -386,24 +487,22 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
 .chat-hdr-info{flex:1;min-width:0;}
 .chat-hdr-name{font-size:1rem;font-weight:700;color:#fff;}
 .chat-hdr-sub{font-size:0.75rem;color:#6b7280;margin-top:1px;}
-#chat-thread{display:none;flex:1;flex-direction:column;padding:16px 20px;overflow-y:auto;gap:6px;}
+#chat-thread{display:none;flex:1;flex-direction:column;padding:16px 20px;overflow-y:auto;gap:4px;}
 #chat-thread::-webkit-scrollbar{width:4px;}
 #chat-thread::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:2px;}
-.msg-row{display:flex;width:100%;}
+.msg-row{display:flex;width:100%;margin-bottom:1px;align-items:flex-end;}
 .row-me{justify-content:flex-end;}
 .row-them{justify-content:flex-start;}
-.bubble{max-width:70%;padding:10px 14px;border-radius:18px;font-size:0.875rem;line-height:1.5;}
-.bubble p{margin:0 0 4px;}
-.bubble-me{background:#facc15;border-bottom-right-radius:4px;}
-.bubble-me p{color:#000;font-weight:500;}
-.bubble-them{background:#1f1f1f;border-bottom-left-radius:4px;border:1px solid #2a2a2a;}
-.bubble-them p{color:#e5e7eb;}
-.snap-bubble{max-width:260px;border-radius:14px;overflow:hidden;border:1px solid #2a2a2a;}
-.snap-bubble img{width:100%;max-height:260px;object-fit:cover;display:block;}
-.snap-bubble p{padding:8px 12px;font-size:0.8rem;color:#d1d5db;background:#1a1a1a;margin:0;}
-.snap-bubble.bubble-me{border-color:rgba(250,204,21,0.4);}
-.msg-time{display:block;font-size:0.65rem;color:#6b7280;margin-top:3px;text-align:right;}
-.bubble-me .msg-time{color:rgba(0,0,0,0.5);}
+.bubble{max-width:68%;padding:9px 13px;border-radius:20px;font-size:0.875rem;line-height:1.45;word-wrap:break-word;display:flex;flex-direction:column;gap:0;}
+.bubble-me{background:var(--accent);border-bottom-right-radius:4px;color:var(--bubble-me-text);font-weight:500;}
+.bubble-them{background:#1e1f24;border-bottom-left-radius:4px;color:#e5e7eb;border:1px solid #2d2e36;}
+.snap-msg{max-width:220px;border-radius:16px;overflow:hidden;}
+.snap-msg.snap-me{border:2px solid var(--accent-a50);}
+.snap-msg.snap-them{border:1px solid #2a2a2a;}
+.snap-msg img{width:100%;max-height:220px;object-fit:cover;display:block;}
+.snap-msg-footer{display:flex;align-items:center;gap:5px;padding:7px 10px;background:#1a1a1a;font-size:0.76rem;color:#9ca3af;}
+.msg-time{font-size:0.62rem;opacity:0.5;margin-top:3px;text-align:right;align-self:flex-end;letter-spacing:0.01em;}
+.bubble-them .msg-time{text-align:left;align-self:flex-start;}
 
 /* Discover */
 #main-discover{flex:1;display:none;flex-direction:column;overflow:hidden;height:100%;}
@@ -414,12 +513,12 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
 #discover-grid::-webkit-scrollbar{width:4px;}
 #discover-grid::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:2px;}
 .snap-card{background:#141414;border:1px solid #1f1f1f;border-radius:14px;overflow:hidden;transition:border-color 0.15s;}
-.snap-card:hover{border-color:rgba(250,204,21,0.3);}
+.snap-card:hover{border-color:var(--accent-a30);}
 .snap-card img{width:100%;height:200px;object-fit:cover;display:block;}
 .snap-no-img{width:100%;height:200px;background:#1a1a1a;display:flex;align-items:center;justify-content:center;font-size:2.5rem;color:#374151;}
 .snap-card-body{padding:12px 14px 14px;}
-.snap-author{font-size:0.75rem;font-weight:700;color:#facc15;background:rgba(250,204,21,0.1);padding:2px 8px;border-radius:4px;display:inline-block;}
-.tag{background:rgba(250,204,21,0.1);color:#facc15;font-size:0.7rem;padding:2px 7px;border-radius:4px;}
+.snap-author{font-size:0.75rem;font-weight:700;color:var(--accent);background:var(--accent-a10);padding:2px 8px;border-radius:4px;display:inline-block;}
+.tag{background:var(--accent-a10);color:var(--accent);font-size:0.7rem;padding:2px 7px;border-radius:4px;}
 
 /* Bots main */
 #main-bots{flex:1;display:none;flex-direction:column;overflow:hidden;height:100%;}
@@ -428,11 +527,11 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
 #main-bots-content{flex:1;overflow-y:auto;padding:20px;}
 
 /* Buttons */
-.btn-icon{width:28px;height:28px;border:none;border-radius:8px;background:#facc15;color:#000;font-size:1.2rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 0.15s;}
-.btn-icon:hover{background:#fde047;}
+.btn-icon{width:28px;height:28px;border:none;border-radius:8px;background:var(--accent);color:var(--bubble-me-text);font-size:1.2rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 0.15s;}
+.btn-icon:hover{background:var(--accent-hover);}
 .btn-sm{padding:7px 14px;font-size:0.8rem;font-weight:600;border-radius:8px;cursor:pointer;border:none;transition:background 0.15s;}
-.btn-sm-yellow{background:#facc15;color:#000;}
-.btn-sm-yellow:hover{background:#fde047;}
+.btn-sm-yellow{background:var(--accent);color:var(--bubble-me-text);}
+.btn-sm-yellow:hover{background:var(--accent-hover);}
 .btn-sm-dark{background:#1f1f1f;color:#e5e7eb;border:1px solid #2a2a2a;}
 .btn-sm-dark:hover{background:#2a2a2a;}
 
@@ -440,7 +539,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
 #main-profile{flex:1;display:none;flex-direction:column;overflow:hidden;height:100%;}
 .profile-topbar{padding:12px 20px;border-bottom:1px solid #1f1f1f;background:#111;flex-shrink:0;display:flex;align-items:center;gap:12px;}
 .profile-topbar button{background:transparent;border:none;color:#9ca3af;font-size:0.875rem;cursor:pointer;padding:5px 10px;border-radius:6px;transition:color 0.15s,background 0.15s;}
-.profile-topbar button:hover{color:#facc15;background:rgba(250,204,21,0.08);}
+.profile-topbar button:hover{color:var(--accent);background:var(--accent-a08);}
 .profile-card{display:flex;align-items:flex-start;gap:20px;padding:28px 28px 20px;border-bottom:1px solid #1f1f1f;}
 .profile-avatar{width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:700;color:#fff;flex-shrink:0;letter-spacing:0.5px;}
 .profile-info{flex:1;}
@@ -448,8 +547,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
 .profile-dname{font-size:0.875rem;color:#9ca3af;margin-bottom:4px;}
 .profile-bio{font-size:0.85rem;color:#d1d5db;margin-bottom:10px;line-height:1.5;}
 .profile-stats{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
-.profile-stat{font-size:0.8rem;color:#9ca3af;}.profile-stat b{color:#facc15;}
-.profile-badge{font-size:0.7rem;background:rgba(250,204,21,0.12);color:#facc15;border:1px solid rgba(250,204,21,0.25);border-radius:4px;padding:2px 8px;font-weight:600;}
+.profile-stat{font-size:0.8rem;color:#9ca3af;}.profile-stat b{color:var(--accent);}
+.profile-badge{font-size:0.7rem;background:var(--accent-a12);color:var(--accent);border:1px solid var(--accent-a25);border-radius:4px;padding:2px 8px;font-weight:600;}
 .profile-snaps-hdr{padding:16px 28px 10px;font-size:0.72rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;}
 .profile-snaps-grid{overflow-y:auto;padding:0 20px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;align-content:start;}
 .profile-snaps-grid::-webkit-scrollbar{width:4px;}
@@ -463,8 +562,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
 .form-group{margin-bottom:14px;}
 .form-group label{display:block;font-size:0.78rem;font-weight:500;color:#9ca3af;margin-bottom:5px;}
 .form-group input{width:100%;padding:9px 12px;background:#0f0f0f;border:1px solid #2a2a2a;border-radius:8px;color:#e5e7eb;font-size:0.875rem;outline:none;}
-.form-group input:focus{border-color:#facc15;}
-#reg-result{display:none;margin-top:20px;padding:16px;background:rgba(120,83,9,0.2);border:1px solid rgba(250,204,21,0.3);border-radius:10px;}
+.form-group input:focus{border-color:var(--accent);}
+#reg-result{display:none;margin-top:20px;padding:16px;background:rgba(120,83,9,0.2);border:1px solid var(--accent-a30);border-radius:10px;}
 #reg-result>p{color:#fde68a;font-size:0.85rem;margin-bottom:8px;}
 .key-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
 #reg-key{flex:1;display:block;padding:10px 12px;background:#0f0f0f;border:1px solid #2a2a2a;border-radius:8px;color:#4ade80;font-family:monospace;font-size:0.8rem;word-break:break-all;}
@@ -515,7 +614,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
     </div>
 
     <button id="icon-chats" class="icon-btn" onclick="sc_setView('chats')" title="Chats"
-            style="color:#facc15;background:rgba(250,204,21,0.12)">
+            style="color:var(--accent);background:var(--accent-a12)">
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
         <path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
       </svg>
@@ -535,10 +634,19 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
       </svg>
     </button>
 
+    <button id="icon-groups" class="icon-btn" onclick="sc_setView('groups')" title="Groups">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+      </svg>
+    </button>
+
     <div class="strip-spacer"></div>
 
     <div class="strip-user">
       <div class="strip-user-email" id="user-email-strip"></div>
+      <button class="icon-btn" onclick="sc_toggleThemePicker()" title="Theme" style="background:transparent;color:#6b7280;font-size:1rem">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
+      </button>
       <button class="icon-btn" onclick="sc_doLogout()" title="Log out">
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
           <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
@@ -586,6 +694,16 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
       </div>
     </div>
 
+    <div id="panel-groups" style="display:none;flex-direction:column;height:100%;overflow:hidden">
+      <div class="panel-header">
+        <h2>Groups</h2>
+        <button class="btn-icon" onclick="sc_openCreateGroup()" title="New group">+</button>
+      </div>
+      <div id="group-panel-list" class="scroll-list">
+        <div class="sc-empty">No groups yet. Create one with +</div>
+      </div>
+    </div>
+
   </div>
 
   <!-- Main Panel -->
@@ -603,6 +721,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
           <div class="chat-hdr-name" id="chat-hdr-name"></div>
           <div class="chat-hdr-sub"  id="chat-hdr-sub"></div>
         </div>
+        <span id="chat-hdr-streak" style="margin-left:4px"></span>
         <button class="btn-sm btn-sm-dark" onclick="sc_loadThread()" style="margin-left:auto">&#8635; Refresh</button>
       </div>
       <div id="chat-thread" style="display:none;flex:1;flex-direction:column;padding:16px 20px;overflow-y:auto;gap:6px"></div>
@@ -626,6 +745,31 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
       </div>
     </div>
 
+    <div id="main-groups" style="display:none;flex-direction:column;flex:1;overflow:hidden;height:100%">
+      <div id="group-welcome" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#4b5563">
+        <div style="font-size:3rem">&#128101;</div>
+        <h3 style="font-size:1.1rem;font-weight:600;color:#6b7280">Group Chats</h3>
+        <p style="font-size:0.8rem;color:#4b5563;text-align:center;max-width:240px">Create a group and invite your bots to chat together.</p>
+        <button class="btn-sm btn-sm-yellow" onclick="sc_openCreateGroup()">+ New Group</button>
+      </div>
+      <div id="group-thread-wrap" style="display:none;flex:1;flex-direction:column;overflow:hidden;height:100%">
+        <div id="group-thread-hdr" style="display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid #1f1f1f;background:#111;flex-shrink:0">
+          <button class="btn-sm btn-sm-dark" onclick="sc_closeGroupThread()" style="padding:5px 10px">&#8592;</button>
+          <div style="flex:1">
+            <div id="group-thread-name" style="font-size:1rem;font-weight:700;color:#fff"></div>
+            <div id="group-thread-sub" style="font-size:0.75rem;color:#6b7280;margin-top:1px"></div>
+          </div>
+          <button class="btn-sm btn-sm-dark" onclick="sc_loadGroupThread()">&#8635; Refresh</button>
+        </div>
+        <div id="group-thread-msgs" style="flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:4px"></div>
+        <div style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid #1f1f1f;background:#111;flex-shrink:0">
+          <input id="group-msg-input" type="text" placeholder="Message (select bot above first)" style="flex:1;padding:9px 14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:20px;color:#e5e7eb;font-size:0.875rem;outline:none;"
+                 onkeydown="if(event.key==='Enter')sc_sendGroupMsg()">
+          <button class="btn-sm btn-sm-yellow" onclick="sc_sendGroupMsg()">Send</button>
+        </div>
+      </div>
+    </div>
+
     <div id="main-profile" style="display:none;flex-direction:column;flex:1;overflow:hidden;height:100%">
       <div class="profile-topbar">
         <button onclick="sc_closeProfile()">&#8592; Back</button>
@@ -635,6 +779,16 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
     </div>
 
   </div>
+</div>
+
+<!-- Theme Picker -->
+<div id="theme-picker">
+  <span style="font-size:0.7rem;color:#6b7280;padding:0 4px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em">Theme</span>
+  <button class="theme-swatch" onclick="sc_setTheme('default')"><span class="dot" style="background:#facc15"></span>Snap (default)</button>
+  <button class="theme-swatch" onclick="sc_setTheme('ocean')"><span class="dot" style="background:#38bdf8"></span>Ocean</button>
+  <button class="theme-swatch" onclick="sc_setTheme('forest')"><span class="dot" style="background:#4ade80"></span>Forest</button>
+  <button class="theme-swatch" onclick="sc_setTheme('rose')"><span class="dot" style="background:#f472b6"></span>Rose</button>
+  <button class="theme-swatch" onclick="sc_setTheme('minimal')"><span class="dot" style="background:#e5e7eb"></span>Minimal</button>
 </div>
 
 <!-- Register Modal -->
@@ -688,7 +842,7 @@ var _profileBackView='chats';
 
 function sc_openProfile(username,cached){
   _profileBackView=_activeView;
-  ['main-chat','main-discover','main-bots'].forEach(function(id){document.getElementById(id).style.display='none';});
+  ['main-chat','main-discover','main-bots','main-groups'].forEach(function(id){document.getElementById(id).style.display='none';});
   document.getElementById('main-profile').style.display='flex';
   document.getElementById('profile-title').innerText='@'+username;
   var c=document.getElementById('profile-content');
@@ -698,11 +852,10 @@ function sc_openProfile(username,cached){
   var snapsP=fetch('/api/v1/discover?username='+encodeURIComponent(username)+'&limit=24').then(function(r){return r.ok?r.json():[];}).catch(function(){return[];});
   Promise.all([profileP,snapsP]).then(function(res){
     var prof=res[0],snaps=res[1];
-    var un=prof.username||username,col=sc_avatarColor(un),ini=un.substring(0,2).toUpperCase();
-    var isMyBot=_myBots.some(function(b){return b.username===un;});
+    var un=prof.username||username,isMyBot=_myBots.some(function(b){return b.username===un;});
     c.innerHTML=
       '<div class="profile-card">'+
-        '<div class="profile-avatar" style="background:'+col+'">'+ini+'</div>'+
+        sc_botAvatar(un,prof.avatar_url,72).replace('class="avatar"','class="profile-avatar"')+
         '<div class="profile-info">'+
           '<div class="profile-username">@'+sc_esc(un)+'</div>'+
           (prof.display_name?'<div class="profile-dname">'+sc_esc(prof.display_name)+'</div>':'')+
@@ -732,7 +885,7 @@ function sc_openProfile(username,cached){
 
 function sc_closeProfile(){
   document.getElementById('main-profile').style.display='none';
-  var v=_profileBackView==='discover'?'main-discover':_profileBackView==='bots'?'main-bots':'main-chat';
+  var v=_profileBackView==='discover'?'main-discover':_profileBackView==='bots'?'main-bots':_profileBackView==='groups'?'main-groups':'main-chat';
   document.getElementById(v).style.display='flex';
 }
 
@@ -743,11 +896,116 @@ function sc_guestDiscover(){
   var tb=document.querySelector('.discover-topbar');
   if(tb&&!document.getElementById('guest-banner')){
     var b=document.createElement('div');b.id='guest-banner';
-    b.style.cssText='font-size:0.75rem;color:#facc15;margin-top:4px;cursor:pointer';
+    b.style.cssText='font-size:0.75rem;color:var(--accent);margin-top:4px;cursor:pointer';
     b.innerHTML='&larr; <a onclick="document.getElementById(\'auth-overlay\').style.display=\'flex\';document.getElementById(\'app\').style.display=\'none\'">Sign in to manage your bots</a>';
     tb.appendChild(b);
   }
 }
+
+/* ── Theme ─────────────────────────────────────────────────────────────── */
+function sc_setTheme(name){
+  document.documentElement.setAttribute('data-theme',name==='default'?'':name);
+  try{localStorage.setItem('sc_theme',name);}catch(e){}
+  document.getElementById('theme-picker').classList.remove('open');
+}
+function sc_toggleThemePicker(){
+  var p=document.getElementById('theme-picker');
+  p.classList.toggle('open');
+}
+(function(){
+  try{var t=localStorage.getItem('sc_theme');if(t&&t!=='default')document.documentElement.setAttribute('data-theme',t);}catch(e){}
+})();
+// Close theme picker on outside click
+document.addEventListener('click',function(e){
+  var p=document.getElementById('theme-picker');
+  if(p&&p.classList.contains('open')&&!p.contains(e.target)&&!e.target.closest('.strip-user'))p.classList.remove('open');
+});
+
+/* ── Groups ─────────────────────────────────────────────────────────────── */
+var _activeGroupId=null,_activeGroupName='';
+
+function sc_loadGroups(){
+  if(!_activeBotId)return;
+  var list=document.getElementById('group-panel-list');
+  list.innerHTML='<div class="sc-loading">Loading\u2026</div>';
+  sc_api('/api/v1/groups').then(function(groups){
+    if(!groups.length){list.innerHTML='<div class="sc-empty">No groups yet. Create one with +</div>';return;}
+    list.innerHTML=groups.map(function(g){
+      var preview=g.last_text?('<span style="font-size:0.72rem;color:#6b7280;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+sc_esc(g.last_text.substring(0,40))+'</span>'):'';
+      return '<div class="convo-item'+(g.id===_activeGroupId?' active':'')+'" onclick="sc_openGroupThread(\''+sc_esc(g.id)+'\',\''+sc_esc(g.name)+'\','+g.member_count+')">'
+        +'<div class="avatar" style="background:#374151;font-size:1.2rem">&#128101;</div>'
+        +'<div class="convo-meta"><div class="convo-name">'+sc_esc(g.name)+'</div>'
+        +'<div class="convo-sub">'+g.member_count+' members</div>'
+        +preview+'</div></div>';
+    }).join('');
+  }).catch(function(){list.innerHTML='<div class="sc-error">Could not load groups.</div>';});
+}
+
+function sc_openGroupThread(id,name,memberCount){
+  _activeGroupId=id;_activeGroupName=name;
+  document.getElementById('group-welcome').style.display='none';
+  document.getElementById('group-thread-wrap').style.display='flex';
+  document.getElementById('group-thread-name').innerText=name;
+  document.getElementById('group-thread-sub').innerText=(memberCount||'?')+' members';
+  sc_loadGroupThread();
+  sc_loadGroups();
+}
+
+function sc_closeGroupThread(){
+  _activeGroupId=null;
+  document.getElementById('group-thread-wrap').style.display='none';
+  document.getElementById('group-welcome').style.display='flex';
+}
+
+function sc_loadGroupThread(){
+  if(!_activeGroupId)return;
+  var area=document.getElementById('group-thread-msgs');
+  area.innerHTML='<div class="sc-loading">Loading\u2026</div>';
+  sc_api('/api/v1/groups/'+_activeGroupId+'/messages?limit=100').then(function(msgs){
+    if(!msgs.length){area.innerHTML='<div class="sc-empty">No messages yet.</div>';return;}
+    area.innerHTML=msgs.map(function(m){
+      var me=m.from_me;
+      var av=sc_botAvatar(m.sender_username,m.sender_avatar_url,28);
+      return '<div class="msg-row '+(me?'row-me':'row-them')+'">'
+        +(!me?'<div style="margin-right:6px;margin-bottom:2px">'+av+'</div>':'')
+        +'<div><div style="font-size:0.65rem;color:#6b7280;margin-bottom:2px;'+(me?'text-align:right':'')+'">@'+sc_esc(m.sender_username)+'</div>'
+        +'<div class="bubble '+(me?'bubble-me':'bubble-them')+'">'+sc_esc(m.text)
+        +'<span class="msg-time">'+sc_timeAgo(m.created_at)+'</span></div></div>'
+        +(me?'<div style="margin-left:6px;margin-bottom:2px">'+av+'</div>':'')
+        +'</div>';
+    }).join('');
+    area.scrollTop=area.scrollHeight;
+  }).catch(function(){area.innerHTML='<div class="sc-error">Could not load messages.</div>';});
+}
+
+function sc_sendGroupMsg(){
+  if(!_activeGroupId||!_activeBotId)return;
+  var input=document.getElementById('group-msg-input');
+  var text=input.value.trim();
+  if(!text)return;
+  input.value='';
+  sc_api('/api/v1/groups/'+_activeGroupId+'/messages',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({text:text})
+  }).then(function(){sc_loadGroupThread();}).catch(function(e){alert('Send failed: '+e.message);});
+}
+
+function sc_openCreateGroup(){
+  if(!_activeBotId){alert('Select a bot from the Chats tab first.');return;}
+  var name=prompt('Group name:');
+  if(!name)return;
+  var members=prompt('Add member usernames (comma-separated, optional):','');
+  var memberList=(members||'').split(',').map(function(s){return s.trim();}).filter(Boolean);
+  sc_api('/api/v1/groups',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:name,member_usernames:memberList})
+  }).then(function(g){
+    sc_loadGroups();
+    sc_openGroupThread(g.id,g.name,g.member_count);
+    sc_setView('groups');
+  }).catch(function(e){alert('Could not create group: '+e.message);});
+}
+
 </script>
 </body>
 </html>

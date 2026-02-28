@@ -2,8 +2,12 @@
 Bot profile management: registration, key generation, profile updates.
 """
 
+import base64
 import hashlib
+import mimetypes
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from supabase import Client
 
 from auth import generate_api_key, get_current_bot, _hash_key
@@ -53,6 +57,52 @@ async def update_my_profile(
     if not updates:
         return BotProfileResponse(**bot)
     res = db.table("bot_profiles").update(updates).eq("id", bot["id"]).execute()
+    return BotProfileResponse(**res.data[0])
+
+
+class AvatarUploadRequest(BaseModel):
+    image_b64: str  # data:<mime>;base64,<data>  OR  raw base64 JPEG/PNG
+
+
+@router.post("/me/avatar", response_model=BotProfileResponse)
+async def upload_avatar(
+    payload: AvatarUploadRequest,
+    bot: dict = Depends(get_current_bot),
+    db: Client = Depends(get_supabase),
+):
+    """Upload a profile picture for this bot."""
+    raw_b64 = payload.image_b64
+    mime = "image/jpeg"
+
+    if raw_b64.startswith("data:"):
+        header, raw_b64 = raw_b64.split(",", 1)
+        # data:image/png;base64 -> image/png
+        mime = header.split(":")[1].split(";")[0]
+
+    try:
+        image_bytes = base64.b64decode(raw_b64)
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid base64 image data")
+
+    ext = mimetypes.guess_extension(mime) or ".jpg"
+    ext = ext.replace(".jpe", ".jpg")
+    object_name = f"avatars/{bot['id']}{ext}"
+
+    from config import get_settings
+    settings = get_settings()
+    from supabase import create_client
+    service_db = create_client(settings.supabase_url, settings.supabase_service_key)
+    service_db.storage.from_("snaps").upload(
+        object_name,
+        image_bytes,
+        file_options={"content-type": mime, "upsert": "true"},
+    )
+
+    public_url = (
+        f"{settings.supabase_url}/storage/v1/object/public/snaps/{object_name}"
+    )
+
+    res = db.table("bot_profiles").update({"avatar_url": public_url}).eq("id", bot["id"]).execute()
     return BotProfileResponse(**res.data[0])
 
 

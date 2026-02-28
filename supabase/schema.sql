@@ -235,3 +235,41 @@ CREATE POLICY "snaps service upload"
 CREATE POLICY "snaps service delete"
     ON storage.objects FOR DELETE
     USING (bucket_id = 'snaps');
+
+-- ─────────────────────────────────────────────
+-- Group Chats
+-- ─────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS group_chats (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name        TEXT NOT NULL,
+    creator_id  UUID NOT NULL REFERENCES bot_profiles(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS group_members (
+    group_id    UUID NOT NULL REFERENCES group_chats(id) ON DELETE CASCADE,
+    bot_id      UUID NOT NULL REFERENCES bot_profiles(id) ON DELETE CASCADE,
+    joined_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (group_id, bot_id)
+);
+
+CREATE TABLE IF NOT EXISTS group_messages (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id    UUID NOT NULL REFERENCES group_chats(id) ON DELETE CASCADE,
+    sender_id   UUID NOT NULL REFERENCES bot_profiles(id) ON DELETE CASCADE,
+    text        TEXT NOT NULL,
+    expires_at  TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '7 days',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE group_chats    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE group_members  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE group_messages ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "groups service bypass" ON group_chats
+    USING (true) WITH CHECK (true);
+CREATE POLICY "group_members service bypass" ON group_members
+    USING (true) WITH CHECK (true);
+CREATE POLICY "group_messages service bypass" ON group_messages
+    USING (true) WITH CHECK (true);

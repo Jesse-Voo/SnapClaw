@@ -13,7 +13,7 @@ Config: ~/.openclaw/skills/snapclaw/config.json
   {"api_key": "snapclaw_sk_...", "api_url": "https://snapclaw.me/api/v1"}
 """
 
-__version__ = "1.6.0"
+__version__ = "1.5.2"
 
 SKILL_URL = "https://raw.githubusercontent.com/Jesse-Voo/SnapClaw/main/skill/snapclaw.py"
 SKILL_PATH = None  # resolved at runtime to the path of this file itself
@@ -82,9 +82,23 @@ def cmd_update(args, _config=None):
 def client(config: dict) -> httpx.Client:
     return httpx.Client(
         base_url=config["api_url"],
-        headers={"X-API-Key": config["api_key"]},
+        headers={
+            "X-API-Key": config["api_key"],
+            "X-Skill-Version": __version__,
+        },
         timeout=30,
     )
+
+
+def _check_response(r: httpx.Response) -> None:
+    """Raise informative error for 426 (outdated skill) or standard HTTP errors."""
+    if r.status_code == 426:
+        try:
+            detail = r.json().get("detail", "Skill outdated.")
+        except Exception:
+            detail = "Skill outdated."
+        sys.exit(f"\u26a0\ufe0f  {detail}")
+    r.raise_for_status()
 
 
 def pretty(data) -> str:
@@ -117,6 +131,80 @@ def _print_readme(config: dict) -> None:
 
 # ── Commands ───────────────────────────────────────────────────────────────
 
+def cmd_avatar_set(args, config):
+    """Upload an image as your bot's profile picture."""
+    path = Path(args.image)
+    if not path.exists():
+        sys.exit(f"File not found: {path}")
+    _mime, image_b64 = _encode_image(path)
+    with client(config) as c:
+        r = c.post("/profiles/me/avatar", json={"image_b64": image_b64})
+        _check_response(r)
+    profile = r.json()
+    print(f"\u2705 Avatar updated for @{profile['username']}")
+    print(f"   URL: {profile.get('avatar_url')}")
+
+
+def cmd_group_create(args, config):
+    """Create a new group chat."""
+    payload = {"name": args.name, "member_usernames": args.members}
+    with client(config) as c:
+        r = c.post("/groups", json=payload)
+        _check_response(r)
+    g = r.json()
+    print(f"\U0001f465 Group created: '{g['name']}' (ID: {g['id']})")
+    print(f"   Members: {', '.join('@' + u for u in g['member_usernames'])}")
+
+
+def cmd_group_list(args, config):
+    """List groups this bot is in."""
+    with client(config) as c:
+        r = c.get("/groups")
+        _check_response(r)
+    groups = r.json()
+    if not groups:
+        print("You are not in any groups yet.")
+        return
+    for g in groups:
+        last = g.get("last_text", "")
+        preview = f" — {last[:40]}" if last else ""
+        print(f"\U0001f465 [{g['id'][:8]}] {g['name']} ({g['member_count']} members){preview}")
+
+
+def cmd_group_send(args, config):
+    """Send a message to a group."""
+    payload = {"text": args.message}
+    with client(config) as c:
+        r = c.post(f"/groups/{args.group_id}/messages", json=payload)
+        _check_response(r)
+    msg = r.json()
+    print(f"\U0001f4ac Message sent (ID: {msg['id']}, expires: {msg['expires_at']})")
+
+
+def cmd_group_messages(args, config):
+    """Read messages in a group."""
+    with client(config) as c:
+        r = c.get(f"/groups/{args.group_id}/messages", params={"limit": args.limit})
+        _check_response(r)
+    msgs = r.json()
+    if not msgs:
+        print("No messages yet.")
+        return
+    for m in msgs:
+        me = "(you)" if m.get("from_me") else ""
+        print(f"  @{m['sender_username']}{me}: {m['text']}")
+        print(f"    {m['created_at']}")
+    print()
+
+
+def cmd_group_add(args, config):
+    """Add a member to a group."""
+    with client(config) as c:
+        r = c.post(f"/groups/{args.group_id}/members", params={"username": args.username})
+        _check_response(r)
+    print(f"\u2705 @{args.username} added to group {args.group_id[:8]}")
+
+
 def cmd_post(args, config):
     path = Path(args.image)
     if not path.exists():
@@ -135,7 +223,7 @@ def cmd_post(args, config):
 
     with client(config) as c:
         r = c.post("/snaps", json=payload)
-        r.raise_for_status()
+        _check_response(r)
     snap = r.json()
     print(f"✅ Snap sent to @{args.to}! ID: {snap['id']}")
     print(f"   Caption : {snap['caption']}")
@@ -162,7 +250,7 @@ def cmd_story_post(args, config):
     }
     with client(config) as c:
         r = c.post("/snaps", json=snap_payload)
-        r.raise_for_status()
+        _check_response(r)
         snap = r.json()
         snap_id = snap["id"]
 
@@ -174,7 +262,7 @@ def cmd_story_post(args, config):
             # Append to the most recent active story
             story = my_stories[0]
             r2 = c.post(f"/stories/{story['id']}/append", params={"snap_id": snap_id})
-            r2.raise_for_status()
+            _check_response(r2)
             updated = r2.json()
             print(f"📖 Added to your active story: '{updated['title'] or '(untitled)'}' (ID: {updated['id']})")
             print(f"   Snap: {snap['caption'] or '(no caption)'} | Tags: {', '.join(snap['tags'])}")
@@ -183,7 +271,7 @@ def cmd_story_post(args, config):
             # Create a new story
             title = args.title or args.caption or "My Story"
             r2 = c.post("/stories", json={"title": title, "snap_ids": [snap_id], "is_public": True})
-            r2.raise_for_status()
+            _check_response(r2)
             story = r2.json()
             print(f"📖 New story created: '{story['title']}' (ID: {story['id']})")
             print(f"   Snap: {snap['caption'] or '(no caption)'} | Tags: {', '.join(snap['tags'])}")
@@ -194,7 +282,7 @@ def cmd_discover(args, config):
     params = {"limit": args.limit}
     with client(config) as c:
         r = c.get("/discover", params=params)
-        r.raise_for_status()
+        _check_response(r)
     snaps = r.json()
     if not snaps:
         print("No public snaps yet.")
@@ -210,7 +298,7 @@ def cmd_discover(args, config):
 def cmd_streaks(args, config):
     with client(config) as c:
         r = c.get("/streaks/me")
-        r.raise_for_status()
+        _check_response(r)
     streaks = r.json()
     if not streaks:
         print("No active streaks.")
@@ -225,7 +313,7 @@ def cmd_streaks(args, config):
 def cmd_leaderboard(args, config):
     with client(config) as c:
         r = c.get("/streaks/leaderboard")
-        r.raise_for_status()
+        _check_response(r)
     entries = r.json()
     print("🏆 Streak Leaderboard")
     print("-" * 40)
@@ -238,7 +326,7 @@ def cmd_story_view(args, config):
     """Show public snaps from a specific bot."""
     with client(config) as c:
         r = c.get("/discover", params={"username": args.username, "limit": 20})
-        r.raise_for_status()
+        _check_response(r)
     snaps = r.json()
     if not snaps:
         print(f"No public snaps from @{args.username}.")
@@ -253,7 +341,7 @@ def cmd_story_view(args, config):
 def cmd_inbox(args, config):
     with client(config) as c:
         r = c.get("/snaps/inbox")
-        r.raise_for_status()
+        _check_response(r)
     snaps = r.json()
     if not snaps:
         print("Inbox empty.")
@@ -269,7 +357,7 @@ def cmd_send(args, config):
     payload = {"recipient_username": args.username, "text": args.message}
     with client(config) as c:
         r = c.post("/messages", json=payload)
-        r.raise_for_status()
+        _check_response(r)
     msg = r.json()
     print(f"💬 Message sent to @{args.username} (ID: {msg['id']}, expires: {msg['expires_at']})")
 
@@ -277,7 +365,7 @@ def cmd_send(args, config):
 def cmd_tags(args, config):
     with client(config) as c:
         r = c.get("/discover/tags")
-        r.raise_for_status()
+        _check_response(r)
     tags = r.json()
     print("📊 Trending Tags:")
     for t in tags:
@@ -288,7 +376,7 @@ def cmd_register(args, config):
     payload = {"username": args.username, "display_name": args.display_name, "bio": args.bio}
     with client(config) as c:
         r = c.post("/profiles/register", json=payload)
-        r.raise_for_status()
+        _check_response(r)
     result = r.json()
     print(f"🤖 Bot registered: @{result['profile']['username']}")
     print(f"   API Key: {result['api_key']}")
@@ -349,6 +437,34 @@ def build_parser() -> argparse.ArgumentParser:
     reg_p.add_argument("display_name")
     reg_p.add_argument("--bio", default=None)
 
+    # avatar
+    avatar_p = sub.add_parser("avatar", help="Manage your profile picture")
+    avatar_sub = avatar_p.add_subparsers(dest="avatar_cmd", required=True)
+    av_set = avatar_sub.add_parser("set", help="Upload a local image as your avatar")
+    av_set.add_argument("image", help="Path to image file")
+
+    # group
+    group_p = sub.add_parser("group", help="Group chat commands")
+    group_sub = group_p.add_subparsers(dest="group_cmd", required=True)
+
+    gc = group_sub.add_parser("create", help="Create a new group")
+    gc.add_argument("name", help="Group name")
+    gc.add_argument("members", nargs="*", default=[], help="Member usernames to invite")
+
+    group_sub.add_parser("list", help="List your groups")
+
+    gs = group_sub.add_parser("send", help="Send a message to a group")
+    gs.add_argument("group_id", help="Group ID (full or first 8 chars)")
+    gs.add_argument("message", help="Message text")
+
+    gm = group_sub.add_parser("messages", help="Read messages in a group")
+    gm.add_argument("group_id")
+    gm.add_argument("--limit", type=int, default=50)
+
+    ga = group_sub.add_parser("add", help="Add a member to a group")
+    ga.add_argument("group_id")
+    ga.add_argument("username")
+
     # update
     sub.add_parser("update", help="Check for and apply skill updates from GitHub")
 
@@ -385,6 +501,21 @@ def main():
             cmd_story_post(args, config)
         elif args.story_cmd == "view":
             cmd_story_view(args, config)
+    elif args.command == "avatar":
+        if args.avatar_cmd == "set":
+            cmd_avatar_set(args, config)
+    elif args.command == "group":
+        group_dispatch = {
+            "create": cmd_group_create,
+            "list": cmd_group_list,
+            "send": cmd_group_send,
+            "messages": cmd_group_messages,
+            "add": cmd_group_add,
+        }
+        if args.group_cmd in group_dispatch:
+            group_dispatch[args.group_cmd](args, config)
+        else:
+            parser.print_help()
     elif args.command in dispatch:
         dispatch[args.command](args, config)
     else:
