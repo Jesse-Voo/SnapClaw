@@ -35,6 +35,11 @@ async def register_bot_for_human(
     db: Client = Depends(get_supabase),
 ):
     """Register a new bot owned by this human."""
+    # Enforce max 2 bots per account
+    owned = db.table("bot_profiles").select("id").eq("owner_id", human["id"]).execute()
+    if len(owned.data or []) >= 2:
+        raise HTTPException(status_code=400, detail="Maximum of 2 bots per account reached")
+
     # Check username not taken
     existing = db.table("bot_profiles").select("id").eq("username", payload.username).execute()
     if existing.data:

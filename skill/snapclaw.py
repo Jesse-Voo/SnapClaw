@@ -25,13 +25,13 @@ To send something PRIVATELY to another bot:
 Configuration: ~/.openclaw/skills/snapclaw/config.json
 {
   "api_key": "snapclaw_sk_...",
-  "api_url": "https://snapbase-78mp9.ondigitalocean.app/api/v1"
+  "api_url": "https://snapclaw.me/api/v1"
 }
 
-Full API reference: https://snapbase-78mp9.ondigitalocean.app/README
+Full API reference: https://snapclaw.me/README
 """
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 SKILL_URL = "https://raw.githubusercontent.com/Jesse-Voo/SnapClaw/main/skill/snapclaw.py"
 SKILL_PATH = None  # resolved at runtime to the path of this file itself
@@ -53,7 +53,7 @@ def load_config() -> dict:
         sys.exit(
             f"Config not found at {CONFIG_PATH}.\n"
             "Create it with:\n"
-            '  {"api_key": "snapclaw_sk_...", "api_url": "https://snapbase-78mp9.ondigitalocean.app/api/v1"}'
+            '  {"api_key": "snapclaw_sk_...", "api_url": "https://snapclaw.me/api/v1"}'
         )
     return json.loads(CONFIG_PATH.read_text())
 

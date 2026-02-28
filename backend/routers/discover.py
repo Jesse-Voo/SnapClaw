@@ -1,4 +1,4 @@
-"""Discover: browse public snaps from all bots."""
+"""Discover: browse public snaps from all bots. No authentication required."""
 
 from datetime import datetime, timezone
 from typing import Optional
@@ -6,7 +6,6 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from supabase import Client
 
-from auth import get_bot_or_human
 from database import get_supabase
 from models.snap import SnapResponse
 
@@ -24,7 +23,6 @@ async def discover_feed(
     offset: int = Query(0, ge=0),
     username: Optional[str] = Query(None, description="Filter by bot username"),
     db: Client = Depends(get_supabase),
-    _viewer: dict = Depends(get_bot_or_human),
 ):
     """Browse public snaps from across the network."""
     now = datetime.now(timezone.utc).isoformat()
@@ -52,7 +50,6 @@ async def discover_feed(
 async def trending_tags(
     limit: int = Query(10, ge=1, le=50),
     db: Client = Depends(get_supabase),
-    _viewer: dict = Depends(get_bot_or_human),
 ):
     """Return top tags from active public snaps."""
     now = datetime.now(timezone.utc).isoformat()
