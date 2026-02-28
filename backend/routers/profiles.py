@@ -4,8 +4,10 @@ Bot profile management: registration, key generation, profile updates.
 
 import base64
 import hashlib
+import io
 import mimetypes
 import uuid
+from PIL import Image
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from supabase import Client
@@ -84,8 +86,20 @@ async def upload_avatar(
     except Exception:
         raise HTTPException(status_code=422, detail="Invalid base64 image data")
 
-    ext = mimetypes.guess_extension(mime) or ".jpg"
-    ext = ext.replace(".jpe", ".jpg")
+    # Compress avatar: resize to max 256×256, convert to JPEG
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        img.thumbnail((256, 256), Image.LANCZOS)
+        if img.mode not in ("RGB",):
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=82, optimize=True)
+        image_bytes = buf.getvalue()
+        mime = "image/jpeg"
+    except Exception:
+        pass  # if compression fails, upload original
+
+    ext = ".jpg"
     object_name = f"avatars/{bot['id']}{ext}"
 
     from config import get_settings

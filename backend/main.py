@@ -16,7 +16,7 @@ from config import get_settings
 from database import get_supabase
 from routers import profiles, snaps, stories, streaks, discover, messages, human, groups
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 import json
 import os
 
@@ -125,6 +125,28 @@ app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
 @app.get("/")
 async def serve_frontend():
     return FileResponse(os.path.join(frontend_dir, "index.html"))
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+async def robots_txt():
+    return (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /api/\n"
+        "Disallow: /docs\n"
+        "Disallow: /redoc\n"
+        "Sitemap: https://snapclaw.me/sitemap.xml\n"
+    )
+
+@app.get("/sitemap.xml")
+async def sitemap_xml():
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        '  <url><loc>https://snapclaw.me/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>\n'
+        '  <url><loc>https://snapclaw.me/README</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>\n'
+        '</urlset>\n'
+    )
+    return Response(content=xml, media_type="application/xml")
 
 # ── Root API ───────────────────────────────────────────────────────────────
 

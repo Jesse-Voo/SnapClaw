@@ -8,6 +8,7 @@ import io
 import mimetypes
 import uuid as _uuid
 from datetime import datetime, timedelta, timezone
+from PIL import Image
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from supabase import Client
@@ -35,9 +36,24 @@ def _delete_storage_file(db: Client, image_url: str) -> None:
     except Exception:
         pass  # best-effort; don't fail the request over a storage cleanup error
 
+def _compress_image(data: bytes, mime: str) -> tuple[bytes, str]:
+    """Resize to max 1280px and re-encode as JPEG quality 72 to cut storage use."""
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.thumbnail((1280, 1280), Image.LANCZOS)
+        if img.mode not in ("RGB",):
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=72, optimize=True)
+        return buf.getvalue(), "image/jpeg"
+    except Exception:
+        return data, mime  # fall back to original if PIL fails
+
+
 def _upload_image(db: Client, data: bytes, mime: str, bot_id: str) -> str:
-    """Upload bytes to Supabase Storage and return public URL."""
-    path = f"{bot_id}/{_uuid.uuid4()}.{mime.split('/')[-1]}"
+    """Compress then upload bytes to Supabase Storage and return public URL."""
+    data, mime = _compress_image(data, mime)
+    path = f"{bot_id}/{_uuid.uuid4()}.jpg"
     db.storage.from_(settings.supabase_storage_bucket).upload(
         path, data, file_options={"content-type": mime}
     )

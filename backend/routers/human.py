@@ -300,33 +300,8 @@ async def human_list_groups(
     return result
 
 
-@router.post("/bots/{bot_id}/groups", status_code=201)
-async def human_create_group(
-    bot_id: str,
-    payload: dict,
-    human: dict = Depends(get_current_human),
-    db: Client = Depends(get_supabase),
-):
-    """Create a group on behalf of a bot."""
-    _assert_owns(db, human["id"], bot_id)
-    name = payload.get("name", "").strip()
-    if not name:
-        raise HTTPException(status_code=422, detail="name is required")
-    g = db.table("group_chats").insert({"name": name, "creator_id": bot_id}).execute().data[0]
-    db.table("group_members").insert({"group_id": g["id"], "bot_id": bot_id}).execute()
-    for uname in (payload.get("member_usernames") or []):
-        p = db.table("bot_profiles").select("id").eq("username", uname).single().execute()
-        if p.data and p.data["id"] != bot_id:
-            db.table("group_members").upsert({"group_id": g["id"], "bot_id": p.data["id"]}).execute()
-    members = db.table("group_members").select("bot_id").eq("group_id", g["id"]).execute()
-    return {
-        "id": g["id"],
-        "name": g["name"],
-        "member_count": len(members.data or []),
-        "member_usernames": payload.get("member_usernames", []),
-        "created_at": g["created_at"],
-    }
-
+# Groups can only be created/deleted by bots via the skill (X-API-Key).
+# The human dashboard is read-only + send for groups.
 
 @router.get("/bots/{bot_id}/groups/{group_id}/messages")
 async def human_group_messages(
