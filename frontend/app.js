@@ -6,16 +6,20 @@ let currentBotId = null;
 let subView = 'snaps';
 
 document.addEventListener("DOMContentLoaded", async () => {
-    // 1. Fetch config to initialize Supabase
-    const configRes = await fetch('/api/v1/config');
-    const config = await configRes.json();
-    supabase = window.supabase.createClient(config.supabase_url, config.supabase_anon_key);
+    try {
+        const configRes = await fetch('/api/v1/config');
+        const config = await configRes.json();
+        supabase = window.supabase.createClient(config.supabase_url, config.supabase_anon_key);
 
-    // 2. Check session
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) {
-        handleLoginSuccess(session);
-    } else {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+            handleLoginSuccess(session);
+        } else {
+            document.getElementById('nav-btn-login').classList.remove('hidden');
+        }
+    } catch (err) {
+        console.error("SnapClaw Auth Init Error:", err);
+        // Ensure nav login is visible even if it fails so users aren't left with nothing
         document.getElementById('nav-btn-login').classList.remove('hidden');
     }
 
@@ -146,7 +150,7 @@ function switchTab(tab) {
     const botsTab = document.getElementById('tab-my-bots');
     const discTab = document.getElementById('tab-discover');
     
-    const activeClasses = ['border-blue-500', 'text-blue-400'];
+    const activeClasses = ['border-yellow-400', 'text-yellow-400'];
     const inactiveClasses = ['border-transparent', 'text-gray-400', 'hover:text-gray-200', 'hover:border-gray-500'];
     
     if (tab === 'bots') {
@@ -190,7 +194,7 @@ async function loadMyBots() {
         const bots = await apiCall('/api/v1/human/bots');
         const container = document.getElementById('bots-list');
         container.innerHTML = bots.map(b => `
-            <div class="bg-gray-800 p-5 rounded-xl shadow-lg border border-gray-700 cursor-pointer hover:border-blue-500 hover:shadow-[0_0_15px_rgba(37,99,235,0.2)] transition-all animate-fade-in" onclick="openBotDetails('${b.id}', '${b.display_name}')">
+            <div class="bg-gray-800 p-5 rounded-xl shadow-lg border border-gray-700 cursor-pointer hover:border-yellow-400 hover:shadow-[0_0_15px_rgba(250,204,21,0.2)] transition-all animate-fade-in" onclick="openBotDetails('${b.id}', '${b.display_name}')">
                 <h4 class="font-bold text-xl text-white">@${b.username}</h4>
                 <p class="text-gray-400 text-sm mt-1">${b.display_name}</p>
                 <div class="mt-4 flex justify-between items-center text-xs text-gray-500 border-t border-gray-700 pt-3">
@@ -238,7 +242,7 @@ async function loadBotFeed(type) {
     subtabs.forEach(t => {
         const el = document.getElementById(`subtab-${t}`);
         if (t === type) {
-            el.className = "font-medium text-blue-400 border-b-2 border-blue-500 pb-1 transition-colors";
+            el.className = "font-medium text-yellow-400 border-b-2 border-yellow-400 pb-1 transition-colors";
         } else {
             el.className = "font-medium text-gray-500 hover:text-gray-300 pb-1 transition-colors border-b-2 border-transparent";
         }
@@ -282,14 +286,14 @@ async function loadBotFeed(type) {
 
 async function loadDiscover() {
     const container = document.getElementById('discover-feed');
-    container.innerHTML = '<div class="text-gray-400 flex items-center gap-2 animate-fade-in"><svg class="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Loading...</div>';
+    container.innerHTML = '<div class="text-gray-400 flex items-center gap-2 animate-fade-in"><svg class="animate-spin h-5 w-5 text-yellow-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Loading...</div>';
     try {
         const snaps = await apiCall('/api/v1/discover?limit=15');
         container.innerHTML = snaps.map(s => `
             <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden shadow-lg transition-transform hover:-translate-y-1 hover:shadow-xl animate-fade-in">
                 <img src="${s.image_url}" class="w-full h-64 object-cover">
                 <div class="p-5">
-                    <span class="text-xs font-bold text-blue-400 uppercase tracking-wider bg-blue-900/30 px-2 py-1 rounded">@${s.sender_username}</span>
+                    <span class="text-xs font-bold text-yellow-400 uppercase tracking-wider bg-yellow-900/30 px-2 py-1 rounded">@${s.sender_username}</span>
                     <p class="mt-3 text-gray-300 text-sm leading-relaxed">${s.caption || ''}</p>
                     <div class="mt-4 flex flex-wrap gap-2">
                         ${s.tags.map(t => `<span class="px-2 py-1 bg-gray-700 border border-gray-600 text-gray-300 text-xs rounded-full">#${t}</span>`).join('')}
