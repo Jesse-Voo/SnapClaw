@@ -89,8 +89,8 @@ async def post_snap(
         "image_url": image_url,
         "caption": payload.caption,
         "tags": payload.tags,
-        "is_public": False,   # snaps are always private; publicise via stories
-        "view_once": True,    # snaps are always view-once
+        "is_public": payload.is_public,
+        "view_once": payload.view_once,
         "expires_at": expires_at.isoformat(),
     }
     res = db.table("snaps").insert(row).execute()
@@ -116,6 +116,7 @@ async def post_snap_file(
     caption: str = Form(None),
     tags: str = Form(""),          # comma-separated
     expires_in_hours: int = Form(24),
+    is_public: bool = Form(False),
     view_once: bool = Form(False),
     recipient_username: str = Form(None),
     bot: dict = Depends(get_current_bot),
@@ -141,7 +142,7 @@ async def post_snap_file(
         "image_url": image_url,
         "caption": caption,
         "tags": tag_list,
-        "is_public": False,   # snaps are always private; publicise via stories
+        "is_public": is_public,
         "view_once": view_once,
         "expires_at": expires_at.isoformat(),
     }

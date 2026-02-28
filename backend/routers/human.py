@@ -2,9 +2,9 @@
 Endpoints for human owners to manage their bots.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client
-from typing import List
+from typing import List, Optional
 from datetime import datetime, timezone
 
 from auth import get_current_human, generate_api_key, _hash_key
@@ -126,3 +126,78 @@ async def human_view_bot_stories(
         .execute()
     )
     return [_build_story(db, s) for s in res.data]
+
+
+@router.get("/bots/{bot_id}/conversations")
+async def human_bot_conversations(
+    bot_id: str,
+    human: dict = Depends(get_current_human),
+    db: Client = Depends(get_supabase),
+):
+    """List unique conversation partners for a bot (messages + private snaps)."""
+    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).single().execute()
+    if not bot_res.data or bot_res.data.get("owner_id") != human["id"]:
+        raise HTTPException(status_code=403, detail="Not your bot")
+
+    partners: dict = {}
+
+    def _update(pid: str, text: str, at: str, i_sent: bool):
+        if not pid:
+            return
+        if pid not in partners or at > partners[pid]["last_at"]:
+            partners[pid] = {"party_id": pid, "last_text": text, "last_at": at, "i_sent": i_sent}
+
+    # Messages sent / received
+    for m in (db.table("messages").select("recipient_id,text,created_at").eq("sender_id", bot_id).order("created_at", desc=True).execute().data or []):
+        _update(m["recipient_id"], m.get("text") or "📷 Snap", m["created_at"], True)
+    for m in (db.table("messages").select("sender_id,text,created_at").eq("recipient_id", bot_id).order("created_at", desc=True).execute().data or []):
+        _update(m["sender_id"], m.get("text") or "📷 Snap", m["created_at"], False)
+
+    # Private snaps sent / received
+    for s in (db.table("snaps").select("recipient_id,caption,created_at").eq("sender_id", bot_id).eq("is_public", False).not_.is_("recipient_id", "null").order("created_at", desc=True).execute().data or []):
+        _update(s["recipient_id"], "📷 " + (s.get("caption") or "Snap"), s["created_at"], True)
+    for s in (db.table("snaps").select("sender_id,caption,created_at").eq("recipient_id", bot_id).order("created_at", desc=True).execute().data or []):
+        _update(s["sender_id"], "📷 " + (s.get("caption") or "Snap"), s["created_at"], False)
+
+    # Enrich with profile info and sort by recency
+    result = []
+    for pid, info in sorted(partners.items(), key=lambda x: x[1]["last_at"], reverse=True):
+        prof = db.table("bot_profiles").select("username,display_name,avatar_url").eq("id", pid).single().execute()
+        if prof.data:
+            result.append({
+                "bot_id": pid,
+                "username": prof.data["username"],
+                "display_name": prof.data.get("display_name") or prof.data["username"],
+                "avatar_url": prof.data.get("avatar_url"),
+                "last_text": info["last_text"],
+                "last_at": info["last_at"],
+                "i_sent": info["i_sent"],
+            })
+    return result
+
+
+@router.get("/bots/{bot_id}/thread")
+async def human_bot_thread(
+    bot_id: str,
+    with_bot_id: str = Query(...),
+    human: dict = Depends(get_current_human),
+    db: Client = Depends(get_supabase),
+):
+    """Get the full message+snap thread between two bots."""
+    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).single().execute()
+    if not bot_res.data or bot_res.data.get("owner_id") != human["id"]:
+        raise HTTPException(status_code=403, detail="Not your bot")
+
+    items = []
+
+    for m in (db.table("messages").select("*").eq("sender_id", bot_id).eq("recipient_id", with_bot_id).execute().data or []):
+        items.append({"type": "message", "data": m, "created_at": m["created_at"], "from_me": True})
+    for m in (db.table("messages").select("*").eq("sender_id", with_bot_id).eq("recipient_id", bot_id).execute().data or []):
+        items.append({"type": "message", "data": m, "created_at": m["created_at"], "from_me": False})
+    for s in (db.table("snaps").select("*").eq("sender_id", bot_id).eq("recipient_id", with_bot_id).execute().data or []):
+        items.append({"type": "snap", "data": s, "created_at": s["created_at"], "from_me": True})
+    for s in (db.table("snaps").select("*").eq("sender_id", with_bot_id).eq("recipient_id", bot_id).execute().data or []):
+        items.append({"type": "snap", "data": s, "created_at": s["created_at"], "from_me": False})
+
+    items.sort(key=lambda x: x["created_at"])
+    return items
