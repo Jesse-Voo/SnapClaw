@@ -57,19 +57,23 @@ async def get_autoreply(
     db: Client = Depends(get_supabase),
 ):
     """Get this bot's current auto-reply configuration."""
-    res = (
-        db.table("bot_profiles")
-        .select("autoreply_enabled, autoreply_text, autoreply_delay_seconds")
-        .eq("id", bot["id"])
-        .single()
-        .execute()
-    )
-    d = res.data or {}
-    return AutoReplyConfig(
-        enabled=d.get("autoreply_enabled", False),
-        text=d.get("autoreply_text"),
-        delay_seconds=d.get("autoreply_delay_seconds", 0),
-    )
+    try:
+        res = (
+            db.table("bot_profiles")
+            .select("autoreply_enabled, autoreply_text, autoreply_delay_seconds")
+            .eq("id", bot["id"])
+            .single()
+            .execute()
+        )
+        d = res.data or {}
+        return AutoReplyConfig(
+            enabled=d.get("autoreply_enabled", False),
+            text=d.get("autoreply_text"),
+            delay_seconds=d.get("autoreply_delay_seconds", 0),
+        )
+    except Exception:
+        # Columns may not exist yet — return disabled default
+        return AutoReplyConfig(enabled=False, text=None, delay_seconds=0)
 
 
 @router.put("/autoreply", response_model=AutoReplyConfig)
@@ -81,11 +85,15 @@ async def set_autoreply(
     """Enable or update auto-reply for this bot."""
     if payload.enabled and not payload.text:
         raise HTTPException(status_code=422, detail="Provide reply text when enabling auto-reply")
-    db.table("bot_profiles").update({
-        "autoreply_enabled": payload.enabled,
-        "autoreply_text": payload.text,
-        "autoreply_delay_seconds": payload.delay_seconds,
-    }).eq("id", bot["id"]).execute()
+    try:
+        db.table("bot_profiles").update({
+            "autoreply_enabled": payload.enabled,
+            "autoreply_text": payload.text,
+            "autoreply_delay_seconds": payload.delay_seconds,
+        }).eq("id", bot["id"]).execute()
+    except Exception:
+        raise HTTPException(status_code=503,
+            detail="Auto-reply columns not yet provisioned. Run the schema migration in Supabase SQL editor.")
     return payload
 
 
@@ -100,7 +108,7 @@ async def send_message(
 
     recipient = (
         db.table("bot_profiles")
-        .select("id, autoreply_enabled, autoreply_text, autoreply_delay_seconds")
+        .select("id")
         .eq("username", payload.recipient_username)
         .single()
         .execute()
@@ -130,18 +138,28 @@ async def send_message(
     res = db.table("messages").insert(row).execute()
 
     # ── Trigger auto-reply if recipient has it enabled ─────────────────────
-    ar = recipient.data
-    if ar.get("autoreply_enabled") and ar.get("autoreply_text"):
-        delay = int(ar.get("autoreply_delay_seconds") or 0)
-        # Minimum 1s so the sent message is committed before the reply lands
-        run_in = max(delay, 1)
-        get_scheduler().add_job(
-            _send_autoreply_bg,
-            "date",
-            run_date=datetime.now(timezone.utc) + timedelta(seconds=run_in),
-            args=[ar["id"], bot["id"], ar["autoreply_text"]],
-            misfire_grace_time=60,
+    # Wrapped in try/except — silently skipped if columns not yet migrated
+    try:
+        ar_res = (
+            db.table("bot_profiles")
+            .select("autoreply_enabled, autoreply_text, autoreply_delay_seconds")
+            .eq("id", recipient.data["id"])
+            .single()
+            .execute()
         )
+        ar = ar_res.data or {}
+        if ar.get("autoreply_enabled") and ar.get("autoreply_text"):
+            delay = int(ar.get("autoreply_delay_seconds") or 0)
+            run_in = max(delay, 1)
+            get_scheduler().add_job(
+                _send_autoreply_bg,
+                "date",
+                run_date=datetime.now(timezone.utc) + timedelta(seconds=run_in),
+                args=[recipient.data["id"], bot["id"], ar["autoreply_text"]],
+                misfire_grace_time=60,
+            )
+    except Exception:
+        pass  # autoreply columns not yet migrated — send still succeeds
 
     return _enrich(db, res.data[0])
 
