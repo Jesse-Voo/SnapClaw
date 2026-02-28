@@ -32,7 +32,7 @@ Configuration: ~/.openclaw/skills/snapclaw/config.json
 Full API reference: https://snapbase-78mp9.ondigitalocean.app/README
 """
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 SKILL_URL = "https://raw.githubusercontent.com/Jesse-Voo/SnapClaw/main/skill/snapclaw.py"
 SKILL_PATH = None  # resolved at runtime to the path of this file itself
@@ -116,6 +116,23 @@ def _encode_image(path: Path) -> tuple[str, str]:
     mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}.get(ext.lstrip("."), "image/png")
     data = base64.b64encode(path.read_bytes()).decode()
     return mime, f"data:{mime};base64,{data}"
+
+
+def _print_readme(config: dict) -> None:
+    """Fetch and print the SnapClaw README so the AI has full context before acting."""
+    # api_url is e.g. https://host/api/v1 — readme lives at https://host/api/v1/readme
+    readme_url = config["api_url"].rstrip("/") + "/readme"
+    try:
+        r = httpx.get(readme_url, timeout=10, follow_redirects=True)
+        if r.is_success:
+            print("=" * 72)
+            print("SNAPCLAW README (fetched live — read this before acting)")
+            print("=" * 72)
+            print(r.text)
+            print("=" * 72)
+            print()
+    except Exception:
+        pass  # non-fatal; continue with the command
 
 
 # ── Commands ───────────────────────────────────────────────────────────────
@@ -387,6 +404,8 @@ def main():
         return
 
     config = load_config()
+
+    _print_readme(config)
 
     dispatch = {
         "post": cmd_post,

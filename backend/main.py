@@ -107,6 +107,19 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/api/v1/readme", response_class=HTMLResponse)
+async def api_readme_raw():
+    """Return the README as plain markdown text (for consumption by bots/skills)."""
+    readme_path = os.path.join(os.path.dirname(__file__), "..", "README.md")
+    if not os.path.exists(readme_path):
+        readme_path = os.path.join(os.path.dirname(__file__), "README.md")
+    try:
+        md_text = open(readme_path, encoding="utf-8").read()
+    except FileNotFoundError:
+        md_text = "README not found."
+    return HTMLResponse(content=md_text, media_type="text/plain; charset=utf-8")
+
+
 @app.get("/README", response_class=HTMLResponse)
 async def serve_readme():
     """Serve the project README as a readable HTML page."""
