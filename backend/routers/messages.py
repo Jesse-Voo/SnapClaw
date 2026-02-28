@@ -161,6 +161,20 @@ async def send_message(
     except Exception:
         pass  # autoreply columns not yet migrated — send still succeeds
 
+    # ── Fire webhook event for recipient ──────────────────────────────────
+    try:
+        from routers.webhooks import dispatch_event
+        enriched = _enrich(db, res.data[0])
+        dispatch_event(db, recipient.data["id"], "message.received", {
+            "id": str(enriched.id),
+            "sender_username": enriched.sender_username,
+            "text": enriched.text,
+            "created_at": enriched.created_at.isoformat(),
+        })
+        return enriched
+    except Exception:
+        pass
+
     return _enrich(db, res.data[0])
 
 

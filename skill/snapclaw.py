@@ -397,6 +397,55 @@ def cmd_autoreply_off(args, config):
     print("⏸️  Auto-reply disabled.")
 
 
+# ── Webhook commands ───────────────────────────────────────────────────────
+
+def cmd_webhook_status(args, config):
+    """Show registered webhooks."""
+    with client(config) as c:
+        r = c.get("/webhooks")
+        _check_response(r)
+    hooks = r.json()
+    if not hooks:
+        print("No webhooks registered.")
+        return
+    for h in hooks:
+        print(f"[{h['id'][:8]}] {h['url']}")
+        print(f"  Events : {', '.join(h['events'])}")
+        print(f"  Secret : {'(set)' if h.get('secret') else '(none)'}")
+        print()
+
+
+def cmd_webhook_set(args, config):
+    """Register or update a webhook URL."""
+    payload = {"url": args.url, "events": ["message.received"]}
+    if args.secret:
+        payload["secret"] = args.secret
+    with client(config) as c:
+        r = c.post("/webhooks", json=payload)
+        _check_response(r)
+    hook = r.json()
+    print(f"✅ Webhook registered: {hook['url']}")
+    print(f"   ID     : {hook['id']}")
+    print(f"   Events : {', '.join(hook['events'])}")
+    if hook.get("secret"):
+        print("   Secret : (set) — incoming requests will include X-SnapClaw-Signature header")
+
+
+def cmd_webhook_off(args, config):
+    """Remove a webhook by ID."""
+    with client(config) as c:
+        if args.id == "all":
+            r = c.get("/webhooks")
+            _check_response(r)
+            for h in r.json():
+                c.delete(f"/webhooks/{h['id']}")
+            print("⏹️  All webhooks removed.")
+        else:
+            r = c.delete(f"/webhooks/{args.id}")
+            _check_response(r)
+            print(f"⏹️  Webhook {args.id} removed.")
+
+
 def cmd_tags(args, config):
     with client(config) as c:
         r = c.get("/discover/tags")
@@ -516,6 +565,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     ar_sub.add_parser("off", help="Disable auto-reply")
 
+    # webhook
+    wh_p = sub.add_parser("webhook", help="Manage webhook endpoints for real-time event delivery")
+    wh_sub = wh_p.add_subparsers(dest="wh_cmd", required=True)
+
+    wh_sub.add_parser("status", help="List registered webhooks")
+
+    wh_set = wh_sub.add_parser("set", help="Register or update a webhook URL")
+    wh_set.add_argument("url", help="HTTPS URL to receive event payloads")
+    wh_set.add_argument("--secret", default=None, help="Signing secret (HMAC-SHA256 header)")
+
+    wh_off = wh_sub.add_parser("off", help="Remove a webhook")
+    wh_off.add_argument("id", help="Webhook ID (or 'all' to remove all)")
+
     return p
 
 
@@ -572,6 +634,16 @@ def main():
         }
         if args.ar_cmd in ar_dispatch:
             ar_dispatch[args.ar_cmd](args, config)
+        else:
+            parser.print_help()
+    elif args.command == "webhook":
+        wh_dispatch = {
+            "status": cmd_webhook_status,
+            "set": cmd_webhook_set,
+            "off": cmd_webhook_off,
+        }
+        if args.wh_cmd in wh_dispatch:
+            wh_dispatch[args.wh_cmd](args, config)
         else:
             parser.print_help()
     elif args.command in dispatch:

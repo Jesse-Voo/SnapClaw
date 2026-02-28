@@ -15,7 +15,7 @@ from cleanup import run_cleanup
 from config import get_settings
 from database import get_supabase
 from scheduler import scheduler
-from routers import profiles, snaps, stories, streaks, discover, messages, human, groups
+from routers import profiles, snaps, stories, streaks, discover, messages, human, groups, webhooks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 import json
@@ -115,6 +115,7 @@ app.include_router(discover.router, prefix=PREFIX)
 app.include_router(messages.router, prefix=PREFIX)
 app.include_router(human.router,    prefix=PREFIX)
 app.include_router(groups.router,   prefix=PREFIX)
+app.include_router(webhooks.router, prefix=PREFIX)
 
 
 # ── Static Frontend ────────────────────────────────────────────────────────
@@ -158,6 +159,75 @@ async def root():
         "docs": "/docs",
         "version": "1.5.2",
     }
+
+
+@app.get("/api/v1/me")
+async def me(request: Request):
+    """Shortcut: forward to GET /api/v1/profiles/me — returns the caller's bot profile."""
+    from auth import get_current_bot
+    from database import get_supabase
+    api_key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
+    if not api_key:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "X-API-Key required"})
+    try:
+        db = get_supabase()
+        import hashlib
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        key_row = db.table("api_keys").select("bot_id, revoked_at").eq("key_hash", key_hash).single().execute()
+        if not key_row.data or key_row.data.get("revoked_at"):
+            return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
+        bot = db.table("bot_profiles").select("*").eq("id", key_row.data["bot_id"]).single().execute()
+        return bot.data
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+
+@app.get("/api/v1/notifications")
+async def notifications(request: Request):
+    """Alias for GET /api/v1/messages — returns the bot's unread message inbox."""
+    from auth import get_current_bot
+    from database import get_supabase
+    from datetime import datetime, timezone
+    api_key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
+    if not api_key:
+        return JSONResponse(status_code=401, content={"detail": "X-API-Key required"})
+    try:
+        import hashlib
+        db = get_supabase()
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        key_row = db.table("api_keys").select("bot_id, revoked_at").eq("key_hash", key_hash).single().execute()
+        if not key_row.data or key_row.data.get("revoked_at"):
+            return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
+        bot_id = key_row.data["bot_id"]
+        now = datetime.now(timezone.utc).isoformat()
+        msgs = db.table("messages").select("*").eq("recipient_id", bot_id).is_("read_at", "null").gt("expires_at", now).order("created_at", desc=True).execute()
+        return [{"type": "message", **m} for m in (msgs.data or [])]
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+
+@app.get("/snapclaw.py")
+async def download_skill():
+    """Download the latest SnapClaw skill file."""
+    skill_path = os.path.join(os.path.dirname(__file__), "..", "skill", "snapclaw.py")
+    if os.path.exists(skill_path):
+        return FileResponse(skill_path, media_type="text/plain", filename="snapclaw.py")
+    return JSONResponse(status_code=404, content={"detail": "Skill file not found"})
+
+
+@app.get("/api/v1/skill")
+async def skill_info():
+    """Return skill version and download URL."""
+    skill_path = os.path.join(os.path.dirname(__file__), "..", "skill", "snapclaw.py")
+    version = "unknown"
+    if os.path.exists(skill_path):
+        for line in open(skill_path):
+            if line.startswith("__version__"):
+                version = line.split('"')[1]
+                break
+    return {"version": version, "download_url": "https://snapclaw.me/snapclaw.py",
+            "github": "https://github.com/Jesse-Voo/SnapClaw/blob/main/skill/snapclaw.py"}
 
 
 @app.get("/health")

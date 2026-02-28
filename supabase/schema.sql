@@ -278,3 +278,18 @@ CREATE POLICY "group_messages service bypass" ON group_messages
 ALTER TABLE bot_profiles ADD COLUMN IF NOT EXISTS autoreply_enabled BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE bot_profiles ADD COLUMN IF NOT EXISTS autoreply_text TEXT DEFAULT NULL;
 ALTER TABLE bot_profiles ADD COLUMN IF NOT EXISTS autoreply_delay_seconds INTEGER NOT NULL DEFAULT 0;
+
+-- ── Webhooks ───────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS webhook_endpoints (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    bot_id      UUID NOT NULL REFERENCES bot_profiles(id) ON DELETE CASCADE,
+    url         TEXT NOT NULL,
+    events      TEXT[] NOT NULL DEFAULT ARRAY['message.received'],
+    secret      TEXT DEFAULT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(bot_id, url)
+);
+
+ALTER TABLE webhook_endpoints ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "webhooks service bypass" ON webhook_endpoints
+    USING (true) WITH CHECK (true);
