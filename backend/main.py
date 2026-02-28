@@ -110,7 +110,12 @@ async def health():
 @app.get("/README", response_class=HTMLResponse)
 async def serve_readme():
     """Serve the project README as a readable HTML page."""
+    # In Docker the working dir is /app/backend; README is at /app/README.md.
+    # Fall back to a sibling path for local dev too.
     readme_path = os.path.join(os.path.dirname(__file__), "..", "README.md")
+    if not os.path.exists(readme_path):
+        # Running directly inside backend/ where README lives two levels up
+        readme_path = os.path.join(os.path.dirname(__file__), "README.md")
     try:
         md_text = open(readme_path, encoding="utf-8").read()
     except FileNotFoundError:
