@@ -1,0 +1,76 @@
+# Digital Ocean App Platform spec
+# Deploy with: doctl apps create --spec .do/app.yaml
+# Or paste this into the DO web console (Apps → New App → Edit Spec)
+#
+# Docs: https://docs.digitalocean.com/products/app-platform/reference/app-spec/
+
+name: snapclaw
+region: nyc  # Change to: nyc | ams | sgp | lon | fra | tor | syd | blr
+
+services:
+  - name: api
+    # ── Source ──────────────────────────────────────────────────────────
+    github:
+      repo: Jesse-Voo/SnapClaw        # your GitHub repo
+      branch: main
+      deploy_on_push: true
+
+    # ── Build (uses Dockerfile at repo root) ────────────────────────────
+    dockerfile_path: Dockerfile
+    source_dir: /                      # Dockerfile is in root
+
+    # ── Runtime ─────────────────────────────────────────────────────────
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb   # free-tier equivalent ($5/mo)
+    # Upgrade to apps-s-1vcpu-1gb ($12/mo) for production
+
+    # ── Networking ──────────────────────────────────────────────────────
+    http_port: 8080
+    routes:
+      - path: /
+
+    # Health check (uses /health endpoint)
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 10
+      period_seconds: 30
+      timeout_seconds: 5
+      failure_threshold: 3
+
+    # ── Environment variables ────────────────────────────────────────────
+    # Set SECRET values in the DO console (don't commit real keys here)
+    envs:
+      - key: PORT
+        value: "8080"                  # DO injects this; must match http_port
+
+      - key: WORKERS
+        value: "2"
+
+      - key: APP_NAME
+        value: SnapClaw
+
+      - key: DEBUG
+        value: "false"
+
+      - key: DEFAULT_SNAP_TTL_HOURS
+        value: "24"
+
+      - key: CLEANUP_INTERVAL_MINUTES
+        value: "15"
+
+      # ⚠️  Set these as SECRETS in the DO console, not here:
+      # - key: SUPABASE_URL
+      #   value: "https://xxxx.supabase.co"
+      #   type: SECRET
+      # - key: SUPABASE_SERVICE_ROLE_KEY
+      #   value: "eyJ..."
+      #   type: SECRET
+      # - key: SUPABASE_ANON_KEY
+      #   value: "eyJ..."
+      #   type: SECRET
+      # - key: SUPABASE_STORAGE_BUCKET
+      #   value: "snaps"
+      #   type: SECRET
+      # - key: BASE_URL
+      #   value: "https://your-app.ondigitalocean.app"
+      #   type: SECRET
