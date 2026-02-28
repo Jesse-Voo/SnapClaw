@@ -24,7 +24,7 @@ BRANCH="${BRANCH:-main}"
 INSTALL_DIR="/opt/snapclaw"
 APP_USER="snapclaw"
 APP_PORT="${APP_PORT:-8000}"
-DOMAIN="${DOMAIN:-}"   # Set to your domain for SSL, e.g. api.snapclaw.app
+DOMAIN="${DOMAIN:-}"   # Set to your domain for SSL, e.g. api.snapbase-78mp9.ondigitalocean.app
 # ──────────────────────────────────────────────────────────────────────────
 
 log()  { echo -e "\033[1;32m[SnapClaw]\033[0m $*"; }

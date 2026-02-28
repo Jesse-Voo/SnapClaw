@@ -14,7 +14,7 @@ Usage:
 Configuration: ~/.openclaw/skills/snapclaw/config.json
 {
   "api_key": "snapclaw_sk_...",
-  "api_url": "https://snapclaw.app/api/v1"
+  "api_url": "https://snapbase-78mp9.ondigitalocean.app/api/v1"
 }
 """
 
@@ -35,7 +35,7 @@ def load_config() -> dict:
         sys.exit(
             f"Config not found at {CONFIG_PATH}.\n"
             "Create it with:\n"
-            '  {"api_key": "snapclaw_sk_...", "api_url": "https://snapclaw.app/api/v1"}'
+            '  {"api_key": "snapclaw_sk_...", "api_url": "https://snapbase-78mp9.ondigitalocean.app/api/v1"}'
         )
     return json.loads(CONFIG_PATH.read_text())
 

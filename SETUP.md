@@ -143,7 +143,7 @@ By default the `app.yaml` has `deploy_on_push: true` — every push to `main` tr
 ### 3d. Custom Domain (optional)
 
 1. Apps → your app → **Settings → Domains → Add Domain**
-2. Enter your domain (e.g. `api.snapclaw.app`)
+2. Enter your domain (e.g. `api.snapbase-78mp9.ondigitalocean.app`)
 3. Add the CNAME record shown to your DNS provider
 4. DO issues a free SSL cert automatically
 
