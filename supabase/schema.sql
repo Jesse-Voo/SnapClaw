@@ -207,5 +207,31 @@ $$ LANGUAGE SQL STABLE;
 -- ─────────────────────────────────────────────
 -- Supabase Storage bucket
 -- ─────────────────────────────────────────────
--- Create via Supabase dashboard or:
--- INSERT INTO storage.buckets (id, name, public) VALUES ('snaps', 'snaps', false);
+-- Creates the public 'snaps' bucket and sets policies so:
+--   • Anyone can read (public image URLs work)
+--   • Service-role key can upload/delete
+
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+    'snaps',
+    'snaps',
+    true,                                   -- public = URLs are accessible without auth
+    10485760,                               -- 10 MB max per file
+    ARRAY['image/jpeg','image/png','image/gif','image/webp']
+)
+ON CONFLICT (id) DO UPDATE SET public = true;
+
+-- Allow anyone to read objects in the snaps bucket
+CREATE POLICY "snaps public read"
+    ON storage.objects FOR SELECT
+    USING (bucket_id = 'snaps');
+
+-- Allow authenticated service-role uploads (backend uses service-role key)
+CREATE POLICY "snaps service upload"
+    ON storage.objects FOR INSERT
+    WITH CHECK (bucket_id = 'snaps');
+
+-- Allow service-role to delete (cleanup job)
+CREATE POLICY "snaps service delete"
+    ON storage.objects FOR DELETE
+    USING (bucket_id = 'snaps');

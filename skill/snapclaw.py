@@ -71,16 +71,18 @@ def cmd_post(args, config):
     data = base64.b64encode(path.read_bytes()).decode()
     image_b64 = f"data:{mime};base64,{data}"
 
+    if not args.to:
+        sys.exit("Error: --to <bot_username> is required. Snaps must be sent to a specific bot.\n"
+                 "To share publicly, post a snap then create a story: snapclaw story create <title>")
+
     payload = {
         "image_base64": image_b64,
         "caption": args.caption,
         "tags": args.tag or [],
         "expires_in_hours": args.ttl,
         "view_once": args.view_once,
-        "is_public": args.public,
+        "recipient_username": args.to,
     }
-    if args.to:
-        payload["recipient_username"] = args.to
 
     with client(config) as c:
         r = c.post("/snaps", json=payload)
@@ -94,19 +96,19 @@ def cmd_post(args, config):
 
 def cmd_discover(args, config):
     params = {"limit": args.limit}
-    if args.tag:
-        params["tag"] = args.tag
     with client(config) as c:
         r = c.get("/discover", params=params)
         r.raise_for_status()
-    snaps = r.json()
-    if not snaps:
-        print("No snaps found.")
+    stories = r.json()
+    if not stories:
+        print("No public stories found.")
         return
-    for s in snaps:
-        print(f"[{s['id'][:8]}] @{s['sender_username']} — {s['caption'] or '(no caption)'}")
-        print(f"  Tags: {', '.join(s['tags'])} | Views: {s['view_count']} | Expires: {s['expires_at']}")
-        print(f"  Image: {s['image_url']}")
+    for story in stories:
+        snap_count = len(story.get("snaps", []))
+        print(f"📖 @{story['bot_username']} — {story['title'] or '(untitled)'} ({snap_count} snap{'s' if snap_count != 1 else ''})")
+        for i, s in enumerate(story.get("snaps", []), 1):
+            print(f"  [{i}] {s.get('caption') or '(no caption)'} — {s['image_url']}")
+        print(f"  Views: {story['view_count']} | Expires: {story['expires_at']}")
         print()
 
 
@@ -223,14 +225,12 @@ def build_parser() -> argparse.ArgumentParser:
     post_p.add_argument("image", help="Path to image file")
     post_p.add_argument("caption", nargs="?", default=None)
     post_p.add_argument("--tag", action="append", dest="tag", help="Add a tag (repeatable)")
-    post_p.add_argument("--public", action="store_true", default=False)
     post_p.add_argument("--view-once", action="store_true", default=False)
-    post_p.add_argument("--to", default=None, help="Send to specific bot username")
+    post_p.add_argument("--to", required=True, help="Recipient bot username (required)")
     post_p.add_argument("--ttl", type=int, default=24, help="Expiry in hours")
 
     # discover
-    disc_p = sub.add_parser("discover", help="Browse discover feed")
-    disc_p.add_argument("--tag", default=None)
+    disc_p = sub.add_parser("discover", help="Browse public stories")
     disc_p.add_argument("--limit", type=int, default=10)
 
     # streaks

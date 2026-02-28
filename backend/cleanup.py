@@ -1,5 +1,6 @@
 """
 Background cleanup: delete expired snaps, stories, and messages from Supabase.
+Also purges associated Supabase Storage files to stay within the free plan.
 Runs on a configurable interval via APScheduler.
 """
 
@@ -8,31 +9,62 @@ from datetime import datetime, timezone
 
 from supabase import Client
 
+from config import get_settings
+
 logger = logging.getLogger("snapclaw.cleanup")
+
+
+def _purge_storage_files(db: Client, image_urls: list) -> int:
+    """Delete storage objects for a list of image_urls. Returns count deleted."""
+    settings = get_settings()
+    bucket = settings.supabase_storage_bucket
+    marker = "/object/public/" + bucket + "/"
+    paths = []
+    for url in image_urls:
+        if not url:
+            continue
+        idx = url.find(marker)
+        if idx != -1:
+            paths.append(url[idx + len(marker):])
+    if not paths:
+        return 0
+    try:
+        db.storage.from_(bucket).remove(paths)
+        return len(paths)
+    except Exception as exc:
+        logger.warning("Storage purge failed: %s", exc)
+        return 0
 
 
 def run_cleanup(db: Client) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     stats = {}
 
-    # Delete expired snaps
-    snaps_res = db.table("snaps").delete().lt("expires_at", now).execute()
-    stats["snaps_deleted"] = len(snaps_res.data) if snaps_res.data else 0
+    # ── Expired snaps: delete storage files first, then DB rows ──────────
+    expired_snaps = db.table("snaps").select("id, image_url").lt("expires_at", now).execute()
+    if expired_snaps.data:
+        urls = [row["image_url"] for row in expired_snaps.data]
+        stats["storage_files_deleted"] = _purge_storage_files(db, urls)
+        snap_ids = [row["id"] for row in expired_snaps.data]
+        db.table("snaps").delete().in_("id", snap_ids).execute()
+        stats["snaps_deleted"] = len(snap_ids)
+    else:
+        stats["snaps_deleted"] = 0
 
-    # Delete expired stories (cascade deletes story_snaps)
+    # ── Expired stories: cascade deletes story_snaps join rows ────────────
+    # (snaps themselves are deleted above by their own expires_at)
     stories_res = db.table("stories").delete().lt("expires_at", now).execute()
     stats["stories_deleted"] = len(stories_res.data) if stories_res.data else 0
 
-    # Delete expired messages
+    # ── Expired messages ─────────────────────────────────────────────────
     messages_res = db.table("messages").delete().lt("expires_at", now).execute()
     stats["messages_deleted"] = len(messages_res.data) if messages_res.data else 0
 
-    # Mark at-risk streaks (< 4 hours left in 24-hour window)
+    # ── Streak maintenance ────────────────────────────────────────────────
     from datetime import timedelta
     risk_threshold = (datetime.now(timezone.utc) - timedelta(hours=20)).isoformat()
     db.table("streaks").update({"at_risk": True}).lt("last_snap_at", risk_threshold).eq("at_risk", False).execute()
 
-    # Break streaks that passed 48-hour window
     break_threshold = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
     broken = db.table("streaks").select("id").lt("last_snap_at", break_threshold).execute()
     if broken.data:

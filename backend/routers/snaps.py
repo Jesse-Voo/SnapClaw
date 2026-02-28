@@ -23,6 +23,18 @@ settings = get_settings()
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
+def _delete_storage_file(db: Client, image_url: str) -> None:
+    """Extract storage path from a Supabase public URL and delete the file."""
+    try:
+        marker = "/object/public/" + settings.supabase_storage_bucket + "/"
+        idx = image_url.find(marker)
+        if idx == -1:
+            return  # external URL, nothing to delete
+        path = image_url[idx + len(marker):]
+        db.storage.from_(settings.supabase_storage_bucket).remove([path])
+    except Exception:
+        pass  # best-effort; don't fail the request over a storage cleanup error
+
 def _upload_image(db: Client, data: bytes, mime: str, bot_id: str) -> str:
     """Upload bytes to Supabase Storage and return public URL."""
     path = f"{bot_id}/{_uuid.uuid4()}.{mime.split('/')[-1]}"
@@ -77,8 +89,8 @@ async def post_snap(
         "image_url": image_url,
         "caption": payload.caption,
         "tags": payload.tags,
-        "is_public": payload.is_public,
-        "view_once": payload.view_once,
+        "is_public": False,   # snaps are always private; publicise via stories
+        "view_once": True,    # snaps are always view-once
         "expires_at": expires_at.isoformat(),
     }
     res = db.table("snaps").insert(row).execute()
@@ -105,7 +117,6 @@ async def post_snap_file(
     tags: str = Form(""),          # comma-separated
     expires_in_hours: int = Form(24),
     view_once: bool = Form(False),
-    is_public: bool = Form(False),
     recipient_username: str = Form(None),
     bot: dict = Depends(get_current_bot),
     db: Client = Depends(get_supabase),
@@ -130,7 +141,7 @@ async def post_snap_file(
         "image_url": image_url,
         "caption": caption,
         "tags": tag_list,
-        "is_public": is_public,
+        "is_public": False,   # snaps are always private; publicise via stories
         "view_once": view_once,
         "expires_at": expires_at.isoformat(),
     }
@@ -197,8 +208,9 @@ async def view_snap(
         updates: dict = {"viewed_at": now.isoformat(), "view_count": snap["view_count"] + 1}
         db.table("snaps").update(updates).eq("id", snap_id).execute()
         snap.update(updates)
-        # If view_once, delete immediately
+        # If view_once, delete immediately (and remove storage file)
         if snap["view_once"]:
+            _delete_storage_file(db, snap["image_url"])
             db.table("snaps").delete().eq("id", snap_id).execute()
     elif snap["is_public"] and not is_sender:
         db.table("snaps").update({"view_count": snap["view_count"] + 1}).eq("id", snap_id).execute()
@@ -234,9 +246,10 @@ async def react_to_snap(
 
 @router.delete("/{snap_id}", status_code=204)
 async def delete_snap(snap_id: str, bot: dict = Depends(get_current_bot), db: Client = Depends(get_supabase)):
-    res = db.table("snaps").select("sender_id").eq("id", snap_id).single().execute()
+    res = db.table("snaps").select("sender_id, image_url").eq("id", snap_id).single().execute()
     if not res.data or res.data["sender_id"] != bot["id"]:
         raise HTTPException(status_code=403, detail="Not your snap")
+    _delete_storage_file(db, res.data["image_url"])
     db.table("snaps").delete().eq("id", snap_id).execute()
 
 

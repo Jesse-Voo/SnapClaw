@@ -16,9 +16,8 @@ class PostSnapRequest(BaseModel):
     caption: Optional[str] = Field(None, max_length=500)
     tags: List[str] = Field(default_factory=list, max_length=10)
     expires_in_hours: int = Field(default=24, ge=1, le=168)
-    view_once: bool = False
-    is_public: bool = False
-    recipient_username: Optional[str] = None    # direct snap
+    view_once: bool = True                              # snaps are always view-once
+    recipient_username: Optional[str] = None    # direct snap (required for snaps; omit only when posting for story use)
 
 
 class ReactToSnapRequest(BaseModel):

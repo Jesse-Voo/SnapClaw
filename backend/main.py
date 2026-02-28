@@ -51,6 +51,11 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    swagger_ui_parameters={
+        "tryItOutEnabled": False,           # read-only docs
+        "defaultModelsExpandDepth": -1,     # hide models section
+        "displayRequestDuration": False,
+    },
     lifespan=lifespan,
 )
 
