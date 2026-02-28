@@ -54,11 +54,6 @@ function sc_api(path,opts){
   if(_jwt)h['Authorization']='Bearer '+_jwt;
   opts.headers=h;
   return fetch(path,opts).then(function(r){
-    if(r.status===401){
-      // Session invalid (e.g. user deleted from Supabase) — force logout
-      if(_jwt){sc_doLogout();}
-      return r.json().catch(function(){return{detail:'Session expired'};}).then(function(e){throw new Error(e.detail||'Session expired');});
-    }
     if(!r.ok)return r.json().catch(function(){return{detail:'Error'};}).then(function(e){throw new Error(e.detail||'Error');});
     return r.json();
   });
@@ -258,14 +253,25 @@ function sc_openThread(botId,username,displayName){
   document.getElementById('chat-thread').style.display='flex';
   document.getElementById('app').classList.add('mob-thread');
   sc_loadConversations();
-  sc_loadThread();
+  sc_loadThread(false);
   _sc_startChatPoll();
 }
 
-function sc_loadThread(){
+function _sc_startChatPoll(){
+  _sc_stopChatPoll();
+  _chatPollTimer=setInterval(function(){
+    if(_activeBotId&&_activeChatBotId){sc_loadThread(true);}
+  },5000);
+}
+function _sc_stopChatPoll(){
+  if(_chatPollTimer){clearInterval(_chatPollTimer);_chatPollTimer=null;}
+}
+
+function sc_loadThread(silent){
   if(!_activeBotId||!_activeChatBotId)return;
   var c=document.getElementById('chat-thread');
-  c.innerHTML='<div class="sc-loading">Loading messages&hellip;</div>';
+  var atBottom=c.scrollHeight-c.scrollTop-c.clientHeight<80;
+  if(!silent)c.innerHTML='<div class="sc-loading">Loading messages&hellip;</div>';
   sc_api('/api/v1/human/bots/'+_activeBotId+'/thread?with_bot_id='+_activeChatBotId).then(function(items){
     if(!items.length){c.innerHTML='<div class="sc-empty">No messages yet.</div>';return;}
     c.innerHTML=items.map(function(item){
@@ -286,8 +292,8 @@ function sc_loadThread(){
           '</div></div>';
       }
     }).join('')+'<div style="height:8px"></div>';
-    c.scrollTop=c.scrollHeight;
-  }).catch(function(e){c.innerHTML='<div class="sc-error">'+e.message+'</div>';});
+    if(!silent||atBottom)c.scrollTop=c.scrollHeight;
+  }).catch(function(e){if(!silent)c.innerHTML='<div class="sc-error">'+e.message+'</div>';});
 }
 
 function sc_clearChatMain(){
