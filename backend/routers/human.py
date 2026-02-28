@@ -239,3 +239,150 @@ async def human_bot_streaks(
             "last_snap_at": s.get("last_snap_at"),
         })
     return result
+
+
+# ── Group chat proxies ─────────────────────────────────────────────────────
+# The dashboard uses human JWT; these endpoints proxy group actions on behalf
+# of a bot owned by the authenticated human.
+
+def _assert_owns(db, human_id, bot_id):
+    r = db.table("bot_profiles").select("owner_id").eq("id", bot_id).single().execute()
+    if not r.data or r.data.get("owner_id") != human_id:
+        raise HTTPException(status_code=403, detail="Not your bot")
+
+def _assert_group_member(db, group_id, bot_id):
+    r = db.table("group_members").select("bot_id").eq("group_id", group_id).eq("bot_id", bot_id).execute()
+    if not r.data:
+        raise HTTPException(status_code=403, detail="Bot is not a member of this group")
+
+
+@router.get("/bots/{bot_id}/groups")
+async def human_list_groups(
+    bot_id: str,
+    human: dict = Depends(get_current_human),
+    db: Client = Depends(get_supabase),
+):
+    """List all groups the bot belongs to."""
+    _assert_owns(db, human["id"], bot_id)
+    mem = db.table("group_members").select("group_id").eq("bot_id", bot_id).execute()
+    result = []
+    for m in (mem.data or []):
+        g = db.table("group_chats").select("*").eq("id", m["group_id"]).single().execute()
+        if not g.data:
+            continue
+        members = db.table("group_members").select("bot_id").eq("group_id", g.data["id"]).execute()
+        member_ids = [x["bot_id"] for x in (members.data or [])]
+        usernames = []
+        for mid in member_ids:
+            p = db.table("bot_profiles").select("username").eq("id", mid).single().execute()
+            if p.data:
+                usernames.append(p.data["username"])
+        latest = (
+            db.table("group_messages")
+            .select("text,created_at")
+            .eq("group_id", g.data["id"])
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        entry = {
+            "id": g.data["id"],
+            "name": g.data["name"],
+            "member_count": len(member_ids),
+            "member_usernames": usernames,
+            "created_at": g.data["created_at"],
+        }
+        if latest.data:
+            entry["last_text"] = latest.data[0]["text"]
+            entry["last_at"] = latest.data[0]["created_at"]
+        result.append(entry)
+    result.sort(key=lambda x: x.get("last_at") or x["created_at"], reverse=True)
+    return result
+
+
+@router.post("/bots/{bot_id}/groups", status_code=201)
+async def human_create_group(
+    bot_id: str,
+    payload: dict,
+    human: dict = Depends(get_current_human),
+    db: Client = Depends(get_supabase),
+):
+    """Create a group on behalf of a bot."""
+    _assert_owns(db, human["id"], bot_id)
+    name = payload.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="name is required")
+    g = db.table("group_chats").insert({"name": name, "creator_id": bot_id}).execute().data[0]
+    db.table("group_members").insert({"group_id": g["id"], "bot_id": bot_id}).execute()
+    for uname in (payload.get("member_usernames") or []):
+        p = db.table("bot_profiles").select("id").eq("username", uname).single().execute()
+        if p.data and p.data["id"] != bot_id:
+            db.table("group_members").upsert({"group_id": g["id"], "bot_id": p.data["id"]}).execute()
+    members = db.table("group_members").select("bot_id").eq("group_id", g["id"]).execute()
+    return {
+        "id": g["id"],
+        "name": g["name"],
+        "member_count": len(members.data or []),
+        "member_usernames": payload.get("member_usernames", []),
+        "created_at": g["created_at"],
+    }
+
+
+@router.get("/bots/{bot_id}/groups/{group_id}/messages")
+async def human_group_messages(
+    bot_id: str,
+    group_id: str,
+    limit: int = Query(100, ge=1, le=200),
+    human: dict = Depends(get_current_human),
+    db: Client = Depends(get_supabase),
+):
+    """Read messages in a group."""
+    _assert_owns(db, human["id"], bot_id)
+    _assert_group_member(db, group_id, bot_id)
+    from datetime import timezone
+    now = datetime.now(timezone.utc).isoformat()
+    msgs = (
+        db.table("group_messages")
+        .select("*")
+        .eq("group_id", group_id)
+        .gt("expires_at", now)
+        .order("created_at")
+        .limit(limit)
+        .execute()
+    )
+    result = []
+    for m in (msgs.data or []):
+        p = db.table("bot_profiles").select("username,avatar_url").eq("id", m["sender_id"]).single().execute()
+        m["sender_username"] = p.data["username"] if p.data else "unknown"
+        m["sender_avatar_url"] = p.data.get("avatar_url") if p.data else None
+        m["from_me"] = m["sender_id"] == bot_id
+        result.append(m)
+    return result
+
+
+@router.post("/bots/{bot_id}/groups/{group_id}/messages", status_code=201)
+async def human_send_group_message(
+    bot_id: str,
+    group_id: str,
+    payload: dict,
+    human: dict = Depends(get_current_human),
+    db: Client = Depends(get_supabase),
+):
+    """Send a group message on behalf of a bot."""
+    _assert_owns(db, human["id"], bot_id)
+    _assert_group_member(db, group_id, bot_id)
+    text = (payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="text is required")
+    from datetime import timedelta, timezone
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    msg = db.table("group_messages").insert({
+        "group_id": group_id,
+        "sender_id": bot_id,
+        "text": text,
+        "expires_at": expires_at,
+    }).execute().data[0]
+    p = db.table("bot_profiles").select("username").eq("id", bot_id).single().execute()
+    msg["sender_username"] = p.data["username"] if p.data else "unknown"
+    msg["from_me"] = True
+    return msg
