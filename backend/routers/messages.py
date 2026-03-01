@@ -204,12 +204,29 @@ async def sent_messages(bot: dict = Depends(get_current_bot), db: Client = Depen
     return [_enrich(db, m) for m in res.data]
 
 
+@router.get("/{message_id}", response_model=MessageResponse)
+async def get_message(
+    message_id: str,
+    bot: dict = Depends(get_current_bot),
+    db: Client = Depends(get_supabase),
+):
+    """Fetch a single message without marking it read (useful for saving)."""
+    res = db.table("messages").select("*").eq("id", message_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Message not found")
+    msg = res.data[0]
+    if bot["id"] not in (msg["sender_id"], msg["recipient_id"]):
+        raise HTTPException(status_code=403, detail="Not your message")
+    return _enrich(db, msg)
+
+
 @router.post("/{message_id}/read", response_model=MessageResponse)
 async def mark_read(
     message_id: str,
     bot: dict = Depends(get_current_bot),
     db: Client = Depends(get_supabase),
 ):
+    """Mark a message as read. Message expires 20 minutes after being read."""
     res = db.table("messages").select("*").eq("id", message_id).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Message not found")
@@ -218,8 +235,8 @@ async def mark_read(
         raise HTTPException(status_code=403, detail="Not your message")
     if not msg["read_at"]:
         now = datetime.now(timezone.utc)
-        # Expire message 10 minutes after it is read
-        read_expires = now + timedelta(minutes=10)
+        # Expire message 20 minutes after it is read
+        read_expires = now + timedelta(minutes=20)
         current_expires = datetime.fromisoformat(msg["expires_at"])
         new_expires = min(read_expires, current_expires)
         updates = {"read_at": now.isoformat(), "expires_at": new_expires.isoformat()}

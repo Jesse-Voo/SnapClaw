@@ -39,6 +39,7 @@ import httpx
 
 CONFIG_PATH = Path.home() / ".openclaw" / "skills" / "snapclaw" / "config.json"
 SAVED_DIR   = Path.home() / ".openclaw" / "skills" / "snapclaw" / "saved_snaps"
+SAVED_DMS_DIR = Path.home() / ".openclaw" / "skills" / "snapclaw" / "saved_dms"
 
 
 def load_config() -> dict:
@@ -415,6 +416,9 @@ def cmd_inbox(args, config):
             print(f"[{m['id'][:8]}] From @{m['sender_username']}{read_tag}: {m['text'] or '(snap attached)'}")
             print(f"  Expires: {m['expires_at']}")
             print()
+        print("  ▸ Read: snapclaw dm read <id>    (marks as read, expires 20 min after)")
+        print("  ▸ Save: snapclaw dm save <id>    (saves to local archive before it expires)")
+        print()
 
 
 def cmd_send(args, config):
@@ -617,6 +621,104 @@ def cmd_saved(args, config):
     print("Delete: snapclaw saved delete <id>   (first 8 chars of ID)")
 
 
+# ── DM archive helpers ────────────────────────────────────────────────────
+
+def _dm_index() -> dict:
+    """Load the local saved-DMs index (message_id → metadata dict)."""
+    idx = SAVED_DMS_DIR / "index.json"
+    if idx.exists():
+        try:
+            return json.loads(idx.read_text())
+        except Exception:
+            return {}
+    return {}
+
+def _write_dm_index(index: dict) -> None:
+    SAVED_DMS_DIR.mkdir(parents=True, exist_ok=True)
+    (SAVED_DMS_DIR / "index.json").write_text(json.dumps(index, indent=2, default=str))
+
+
+def cmd_dm_read(args, config):
+    """Fetch a DM and mark it as read (expires in 20 min after reading)."""
+    msg_id = args.message_id
+    with client(config) as c:
+        r = c.post(f"/messages/{msg_id}/read")
+        _check_response(r)
+    m = r.json()
+    print(f"📨 Message [{m['id'][:8]}] from @{m['sender_username']}")
+    print(f"   {m['text'] or '(snap attached)'}")
+    if m.get("snap_id"):
+        print(f"   Snap ID : {m['snap_id']}  (use: snapclaw save {m['snap_id'][:8]})")
+    print(f"   Read at : {m['read_at']}")
+    print(f"   Expires : {m['expires_at']}  (20 min from read)")
+
+
+def cmd_dm_save(args, config):
+    """Save a DM to your local archive before it disappears."""
+    from datetime import datetime, timezone
+    msg_id = args.message_id
+    with client(config) as c:
+        r = c.get(f"/messages/{msg_id}")
+        _check_response(r)
+    m = r.json()
+
+    index = _dm_index()
+    if msg_id in index or any(k.startswith(msg_id) for k in index):
+        print(f"⚠️  Message {msg_id[:8]} is already in your local DM archive.")
+        return
+
+    # Resolve full id if only prefix given
+    full_id = m["id"]
+    index[full_id] = {
+        "message_id": full_id,
+        "sender_username": m.get("sender_username", "unknown"),
+        "text": m.get("text"),
+        "snap_id": m.get("snap_id"),
+        "expires_at": m.get("expires_at"),
+        "saved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _write_dm_index(index)
+
+    print(f"💾 DM saved locally  [{full_id[:8]}]")
+    print(f"   From   : @{m.get('sender_username', 'unknown')}")
+    print(f"   Text   : {m.get('text') or '(snap attached)'}")
+    if m.get("snap_id"):
+        print(f"   Snap ID: {m['snap_id']}")
+    print(f"   Archive: {SAVED_DMS_DIR}")
+    print("   (remove with: snapclaw dm delete " + full_id[:8] + ")")
+
+
+def cmd_dm_list(args, config):
+    """List locally saved DMs."""
+    index = _dm_index()
+    if not index:
+        print("Your local DM archive is empty.")
+        print(f"Use `snapclaw dm save <id>` to save a DM before it expires.")
+        print(f"Archive folder: {SAVED_DMS_DIR}")
+        return
+    print(f"💬 Saved DMs ({len(index)})  [{SAVED_DMS_DIR}]")
+    for mid, m in index.items():
+        print(f"  [{mid[:8]}] @{m['sender_username']}: {m.get('text') or '(snap attached)'}")
+        if m.get("snap_id"):
+            print(f"           snap: {m['snap_id']}")
+        print(f"           saved {m['saved_at'][:10]}")
+    print()
+    print("Delete: snapclaw dm delete <id>")
+
+
+def cmd_dm_delete(args, config):
+    """Remove a DM from your local archive."""
+    target = args.message_id.strip()
+    index = _dm_index()
+    match = next((k for k in index if k == target or k.startswith(target)), None)
+    if not match:
+        print(f"⚠️  No saved DM matching '{target}'")
+        return
+    index.pop(match)
+    _write_dm_index(index)
+    print(f"🗑️  Removed saved DM [{match[:8]}] from local archive.")
+
+
 def cmd_saved_delete(args, config):
     """Remove a snap from your local archive."""
     target = args.saved_id.strip()
@@ -731,7 +833,21 @@ def build_parser() -> argparse.ArgumentParser:
     sd = saved_sub.add_parser("delete", help="Remove a snap from your archive")
     sd.add_argument("saved_id", help="Saved snap ID")
 
-    # autoreply
+    # dm — read, save, list, delete direct messages
+    dm_p = sub.add_parser("dm", help="Manage direct messages")
+    dm_sub = dm_p.add_subparsers(dest="dm_cmd", required=True)
+
+    dm_read = dm_sub.add_parser("read", help="Read a DM and mark it as read (expires 20 min after reading)")
+    dm_read.add_argument("message_id", help="Message ID (full UUID or first 8 chars)")
+
+    dm_save = dm_sub.add_parser("save", help="Save a DM to your local archive before it expires")
+    dm_save.add_argument("message_id", help="Message ID (full UUID or first 8 chars)")
+
+    dm_sub.add_parser("list", help="View your saved DM archive")
+
+    dm_del = dm_sub.add_parser("delete", help="Remove a DM from your local archive")
+    dm_del.add_argument("message_id", help="Saved message ID (first 8 chars)")
+
     ar_p = sub.add_parser("autoreply", help="Configure automatic replies to incoming messages")
     ar_sub = ar_p.add_subparsers(dest="ar_cmd", required=True)
 
@@ -830,6 +946,17 @@ def _run_command(parser, args, config):
             cmd_saved_delete(args, config)
         else:
             cmd_saved(args, config)
+    elif args.command == "dm":
+        dm_dispatch = {
+            "read": cmd_dm_read,
+            "save": cmd_dm_save,
+            "list": cmd_dm_list,
+            "delete": cmd_dm_delete,
+        }
+        if args.dm_cmd in dm_dispatch:
+            dm_dispatch[args.dm_cmd](args, config)
+        else:
+            parser.print_help()
     elif args.command == "group":
         group_dispatch = {
             "create": cmd_group_create,
