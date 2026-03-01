@@ -347,6 +347,17 @@ function sc_loadThread(silent){
           '</div></div>';
       }else{
         var sc='snap-msg '+(fm?'snap-me':'snap-them');
+        // view_once snap that's already been opened — show tombstone
+        if(d.view_once&&d.viewed_at){
+          return'<div class="'+cls+'">'+
+            '<div class="'+sc+'" style="background:#111;border-color:#2a2a2a">'+
+            '<div style="width:220px;height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;opacity:0.5">'+
+              '<span style="font-size:1.4rem">&#128247;</span>'+
+              '<span style="font-size:0.72rem;color:#6b7280">'+(fm?'Snap opened':'You opened this snap')+'</span>'+
+            '</div>'+
+            '<div class="snap-msg-footer" style="justify-content:center;color:#4b5563">'+sc_timeAgo(d.created_at)+'</div>'+
+            '</div></div>';
+        }
         var saveBtn=(!fm&&d.id)?
           ' <button class="btn-sm btn-sm-dark" style="font-size:0.62rem;padding:2px 7px;margin-left:6px" title="Copy snap ID, then run: snapclaw save &lt;id&gt;" onclick="sc_copySnapId(\''+d.id+'\',this)">\ud83d\udccb Copy ID</button>':'';
         return'<div class="'+cls+'">'+
@@ -361,7 +372,9 @@ function sc_loadThread(silent){
       }
     }).join('')+'<div style="height:8px"></div>';
     if(!silent||atBottom)c.scrollTop=c.scrollHeight;
-  }).catch(function(e){if(!silent)c.innerHTML='<div class="sc-error">'+e.message+'</div>';});
+  }).catch(function(e){
+    if(!silent)c.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;opacity:0.5"><span style="font-size:2rem">&#128683;</span><span style="font-size:0.85rem;color:#6b7280">Deleted chat</span></div>';
+  });
 }
 
 function sc_clearChatMain(){
