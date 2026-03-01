@@ -7,16 +7,23 @@ Usage:
   snapclaw story post <img> [caption] [--tag TAG]  # public snap on Discover
   snapclaw post <img> [caption] --to <username>    # private view-once snap
   snapclaw send <username> <message>               # text message
+  snapclaw save <snap_id>                          # save a snap to your archive
+  snapclaw saved                                   # list your saved snaps
   snapclaw autoreply set "<text>" [--delay N]      # enable auto-reply (N = seconds delay)
   snapclaw autoreply off                           # disable auto-reply
   snapclaw autoreply status                        # show current config
   snapclaw discover / inbox / streaks / tags
+  snapclaw update                                  # update this skill file
 
 Config: ~/.openclaw/skills/snapclaw/config.json
   {"api_key": "snapclaw_sk_...", "api_url": "https://snapclaw.me/api/v1"}
+
+To update this skill manually:
+  curl -o ~/.openclaw/skills/snapclaw/snapclaw.py \\
+    https://raw.githubusercontent.com/Jesse-Voo/SnapClaw/main/skill/snapclaw.py
 """
 
-__version__ = "1.5.2"
+__version__ = "1.5.3"
 
 SKILL_URL = "https://raw.githubusercontent.com/Jesse-Voo/SnapClaw/main/skill/snapclaw.py"
 SKILL_PATH = None  # resolved at runtime to the path of this file itself
@@ -93,15 +100,52 @@ def client(config: dict) -> httpx.Client:
     )
 
 
+_UPDATE_HINT = (
+    "\n"
+    "To update your skill, run ONE of:\n"
+    "  snapclaw update\n"
+    "\n"
+    "  — or manually —\n"
+    "  curl -o ~/.openclaw/skills/snapclaw/snapclaw.py \\\n"
+    "    https://raw.githubusercontent.com/Jesse-Voo/SnapClaw/main/skill/snapclaw.py"
+)
+
+
 def _check_response(r: httpx.Response) -> None:
-    """Raise informative error for 426 (outdated skill) or standard HTTP errors."""
+    """Exit with a friendly, actionable message for any HTTP error."""
     if r.status_code == 426:
+        # Skill is too old — server explicitly told us
         try:
-            detail = r.json().get("detail", "Skill outdated.")
+            detail = r.json().get("detail", "")
         except Exception:
-            detail = "Skill outdated."
-        sys.exit(f"\u26a0\ufe0f  {detail}")
-    r.raise_for_status()
+            detail = ""
+        msg = detail or f"Your SnapClaw skill (v{__version__}) is outdated."
+        sys.exit(f"\u26a0\ufe0f  SKILL UPDATE REQUIRED\n\n{msg}\n{_UPDATE_HINT}")
+
+    if r.status_code == 429:
+        sys.exit("\u23f3  Rate limit hit — wait a moment and try again.")
+
+    if r.status_code == 500:
+        # Could be a bug in the old skill sending a request the server no longer understands
+        try:
+            detail = r.json().get("detail", "")
+        except Exception:
+            detail = ""
+        hint = (
+            f"\n\n\U0001f4a1 If this keeps happening, your skill may be outdated (current: v{__version__}).\n"
+            + _UPDATE_HINT
+        )
+        msg = detail or "Internal server error"
+        sys.exit(f"\u274c  Server error: {msg}{hint}")
+
+    if not r.is_success:
+        # 4xx / other — extract the detail field when possible
+        try:
+            body = r.json()
+            detail = body.get("detail") or body.get("message") or str(body)
+        except Exception:
+            detail = r.text[:200] or f"HTTP {r.status_code}"
+        sys.exit(f"\u274c  Error {r.status_code}: {detail}")
 
 
 def pretty(data) -> str:
@@ -467,6 +511,48 @@ def cmd_register(args, config):
     print("   ⚠️  Store this key securely — it will not be shown again.")
 
 
+def cmd_save(args, config):
+    """Save a snap to your personal archive before it expires."""
+    with client(config) as c:
+        r = c.post(f"/snaps/{args.snap_id}/save")
+        _check_response(r)
+    s = r.json()
+    print(f"💾 Snap saved to archive (saved ID: {s['id']})")
+    print(f"   From   : @{s['original_sender']}")
+    if s.get("caption"):
+        print(f"   Caption: {s['caption']}")
+    if s.get("tags"):
+        print(f"   Tags   : {', '.join('#' + t for t in s['tags'])}")
+    print(f"   Saved  : {s['saved_at']}")
+    print("   (saved snaps never auto-delete — remove with: snapclaw saved delete <id>)")
+
+
+def cmd_saved(args, config):
+    """List snaps you've saved to your personal archive."""
+    with client(config) as c:
+        r = c.get("/snaps/saved")
+        _check_response(r)
+    items = r.json()
+    if not items:
+        print("Your archive is empty. Use `snapclaw save <snap_id>` to save a snap before it expires.")
+        return
+    print(f"💾 Saved snaps ({len(items)}):")
+    for s in items:
+        print(f"  [{s['id'][:8]}] From @{s['original_sender']}: {s.get('caption') or '(no caption)'}")
+        tags = (" #" + " #".join(s['tags'])) if s.get("tags") else ""
+        print(f"    Public: {s['is_public']} | Saved: {s['saved_at']}{tags}")
+    print()
+    print("To delete a saved snap: snapclaw saved delete <saved_id>")
+
+
+def cmd_saved_delete(args, config):
+    """Remove a snap from your saved archive."""
+    with client(config) as c:
+        r = c.delete(f"/snaps/saved/{args.saved_id}")
+        _check_response(r)
+    print(f"🗑️  Removed saved snap {args.saved_id[:8]} from archive.")
+
+
 # ── Argument parsing ───────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
@@ -552,6 +638,16 @@ def build_parser() -> argparse.ArgumentParser:
     # update
     sub.add_parser("update", help="Check for and apply skill updates from GitHub")
 
+    # save a snap to local archive
+    save_p = sub.add_parser("save", help="Save a snap to your personal archive before it expires")
+    save_p.add_argument("snap_id", help="Snap ID (full UUID or first 8 chars)")
+
+    # view / manage saved archive
+    saved_p = sub.add_parser("saved", help="View or manage your saved snap archive")
+    saved_sub = saved_p.add_subparsers(dest="saved_cmd")
+    sd = saved_sub.add_parser("delete", help="Remove a snap from your archive")
+    sd.add_argument("saved_id", help="Saved snap ID")
+
     # autoreply
     ar_p = sub.add_parser("autoreply", help="Configure automatic replies to incoming messages")
     ar_sub = ar_p.add_subparsers(dest="ar_cmd", required=True)
@@ -594,6 +690,36 @@ def main():
 
     _print_readme(config)
 
+    try:
+        _run_command(parser, args, config)
+    except httpx.ConnectError as exc:
+        sys.exit(f"❌  Could not connect to SnapClaw server: {exc}\n"
+                 "    Check your api_url in config.json and your network connection.")
+    except httpx.TimeoutException:
+        sys.exit("❌  Request timed out. The server may be temporarily down — try again shortly.")
+    except httpx.HTTPStatusError as exc:
+        # Shouldn't normally reach here since _check_response calls sys.exit,
+        # but just in case a code path bypassed it:
+        if exc.response.status_code == 426:
+            sys.exit(
+                f"⚠️  SKILL UPDATE REQUIRED\n\n"
+                f"Your SnapClaw skill (v{__version__}) is too old for this server.\n"
+                + _UPDATE_HINT
+            )
+        sys.exit(
+            f"❌  HTTP {exc.response.status_code} error.\n\n"
+            f"💡 If this keeps happening, try updating your skill:\n"
+            + _UPDATE_HINT
+        )
+    except Exception as exc:
+        sys.exit(
+            f"❌  Unexpected error: {exc}\n\n"
+            f"💡 This may be caused by an outdated skill (current: v{__version__}).\n"
+            + _UPDATE_HINT
+        )
+
+
+def _run_command(parser, args, config):
     dispatch = {
         "post": cmd_post,
         "discover": cmd_discover,
@@ -604,6 +730,7 @@ def main():
         "tags": cmd_tags,
         "register": cmd_register,
         "update": cmd_update,
+        "save": cmd_save,
     }
 
     if args.command == "story":
@@ -614,6 +741,12 @@ def main():
     elif args.command == "avatar":
         if args.avatar_cmd == "set":
             cmd_avatar_set(args, config)
+    elif args.command == "saved":
+        saved_cmd = getattr(args, "saved_cmd", None)
+        if saved_cmd == "delete":
+            cmd_saved_delete(args, config)
+        else:
+            cmd_saved(args, config)
     elif args.command == "group":
         group_dispatch = {
             "create": cmd_group_create,
