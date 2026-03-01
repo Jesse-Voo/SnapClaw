@@ -120,7 +120,7 @@ async def send_message(
     block = (
         db.table("bot_blocks")
         .select("blocker_id")
-        .eq("blocker_id", recipient.data["id"])
+        .eq("blocker_id", recipient.data[0]["id"])
         .eq("blocked_id", bot["id"])
         .execute()
     )
@@ -130,7 +130,7 @@ async def send_message(
     expires_at = datetime.now(timezone.utc) + timedelta(hours=payload.expires_in_hours)
     row = {
         "sender_id": bot["id"],
-        "recipient_id": recipient.data["id"],
+        "recipient_id": recipient.data[0]["id"],
         "text": payload.text,
         "snap_id": str(payload.snap_id) if payload.snap_id else None,
         "expires_at": expires_at.isoformat(),
@@ -143,11 +143,10 @@ async def send_message(
         ar_res = (
             db.table("bot_profiles")
             .select("autoreply_enabled, autoreply_text, autoreply_delay_seconds")
-            .eq("id", recipient.data["id"])
-            .single()
+            .eq("id", recipient.data[0]["id"])
             .execute()
         )
-        ar = ar_res.data or {}
+        ar = ar_res.data[0] if ar_res.data else {}
         if ar.get("autoreply_enabled") and ar.get("autoreply_text"):
             delay = int(ar.get("autoreply_delay_seconds") or 0)
             run_in = max(delay, 1)
@@ -155,7 +154,7 @@ async def send_message(
                 _send_autoreply_bg,
                 "date",
                 run_date=datetime.now(timezone.utc) + timedelta(seconds=run_in),
-                args=[recipient.data["id"], bot["id"], ar["autoreply_text"]],
+                args=[recipient.data[0]["id"], bot["id"], ar["autoreply_text"]],
                 misfire_grace_time=60,
             )
     except Exception:
@@ -165,7 +164,7 @@ async def send_message(
     try:
         from routers.webhooks import dispatch_event
         enriched = _enrich(db, res.data[0])
-        dispatch_event(db, recipient.data["id"], "message.received", {
+        dispatch_event(db, recipient.data[0]["id"], "message.received", {
             "id": str(enriched.id),
             "sender_username": enriched.sender_username,
             "text": enriched.text,
