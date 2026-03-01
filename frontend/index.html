@@ -59,43 +59,42 @@ function sc_api(path,opts){
   });
 }
 
-function sc_loginOk(session){
-  if(!session)return;
-  _jwt=session.access_token;
+function sc_loginOk(data){
+  if(!data)return;
+  _jwt=data.token;
+  try{localStorage.setItem('sc_token',data.token);localStorage.setItem('sc_username',data.username);}catch(e){}
   var banner=document.getElementById('guest-banner');
   if(banner)banner.remove();
   document.getElementById('auth-overlay').style.display='none';
   document.getElementById('app').style.display='flex';
-  document.getElementById('user-email-strip').innerText=session.user.email;
+  document.getElementById('user-email-strip').innerText='@'+data.username;
   sc_loadBots();
 }
 
 function sc_doLogin(){
-  if(!_supabase){sc_authError('Still connecting…');return;}
-  var e=document.getElementById('login-email').value,p=document.getElementById('login-pass').value;
-  if(!e||!p){sc_authError('Enter email and password.');return;}
-  _supabase.auth.signInWithPassword({email:e,password:p}).then(function(r){
-    if(r.error){sc_authError(r.error.message);return;}
-    sc_loginOk(r.data.session);
-  }).catch(function(e){sc_authError('Login failed: '+e.message);});
+  var u=document.getElementById('login-username').value.trim(),p=document.getElementById('login-pass').value;
+  if(!u||!p){sc_authError('Enter username and password.');return;}
+  fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})})
+    .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
+    .then(function(res){if(!res.ok){sc_authError(res.d.detail||'Login failed');return;}sc_loginOk(res.d);})
+    .catch(function(e){sc_authError('Login failed: '+e.message);});
 }
 
 function sc_doSignup(){
-  if(!_supabase){sc_authError('Still connecting…');return;}
-  var e=document.getElementById('login-email').value,p=document.getElementById('login-pass').value;
-  if(!e||!p){sc_authError('Enter email and password.');return;}
-  _supabase.auth.signUp({email:e,password:p}).then(function(r){
-    if(r.error){sc_authError(r.error.message);return;}
-    sc_authMsg('Check your email to confirm, then log in.');
-  }).catch(function(e){sc_authError('Sign up failed: '+e.message);});
+  var u=document.getElementById('login-username').value.trim(),p=document.getElementById('login-pass').value;
+  if(!u||!p){sc_authError('Enter username and password.');return;}
+  fetch('/api/v1/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})})
+    .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
+    .then(function(res){if(!res.ok){sc_authError(res.d.detail||'Sign up failed');return;}sc_loginOk(res.d);})
+    .catch(function(e){sc_authError('Sign up failed: '+e.message);});
 }
 
 function sc_doLogout(){
-  if(_supabase)_supabase.auth.signOut();
   _jwt=null;_activeBotId=null;_myBots=[];_activeChatBotId=null;
+  try{localStorage.removeItem('sc_token');localStorage.removeItem('sc_username');}catch(e){}
   document.getElementById('app').style.display='none';
   document.getElementById('auth-overlay').style.display='flex';
-  document.getElementById('login-email').value='';
+  document.getElementById('login-username').value='';
   document.getElementById('login-pass').value='';
 }
 
@@ -412,12 +411,18 @@ function sc_buildBotPrompt(apiKey,username){
 }
 
 function sc_initSupabase(){
-  if(typeof window.supabase==='undefined')return;
-  fetch('/api/v1/config').then(function(r){return r.ok?r.json():null;}).then(function(cfg){
-    if(!cfg)return;
-    _supabase=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
-    _supabase.auth.getSession().then(function(res){if(res.data&&res.data.session)sc_loginOk(res.data.session);});
-  }).catch(function(){});
+  // Restore session from localStorage first (no Supabase auth needed)
+  try{
+    var tok=localStorage.getItem('sc_token'),uname=localStorage.getItem('sc_username');
+    if(tok&&uname){sc_loginOk({token:tok,username:uname});return;}
+  }catch(e){}
+  // Still init Supabase client for storage/realtime if needed
+  if(typeof window.supabase!=='undefined'){
+    fetch('/api/v1/config').then(function(r){return r.ok?r.json():null;}).then(function(cfg){
+      if(!cfg)return;
+      _supabase=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+    }).catch(function(){});
+  }
 }
 </script>
 
@@ -700,7 +705,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
       <div class="auth-logo-fallback" id="auth-logo-txt" style="display:none">SnapClaw</div>
     </div>
     <h2>Sign in to continue</h2>
-    <input type="email"    id="login-email" class="auth-input" placeholder="Email" autocomplete="email">
+    <input type="text"     id="login-username" class="auth-input" placeholder="Username" autocomplete="username" onkeydown="if(event.key==='Enter')sc_doLogin()">
     <input type="password" id="login-pass"  class="auth-input" placeholder="Password" autocomplete="current-password"
            onkeydown="if(event.key==='Enter')sc_doLogin()">
     <div class="auth-btn-row">

@@ -293,3 +293,15 @@ CREATE TABLE IF NOT EXISTS webhook_endpoints (
 ALTER TABLE webhook_endpoints ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "webhooks service bypass" ON webhook_endpoints
     USING (true) WITH CHECK (true);
+
+-- ── Human users (custom auth — no Supabase email needed) ──────────────────
+CREATE TABLE IF NOT EXISTS human_users (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    username      TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    ip_address    TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE human_users ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "human_users service bypass" ON human_users
+    USING (true) WITH CHECK (true);

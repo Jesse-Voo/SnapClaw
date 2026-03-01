@@ -10,12 +10,17 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from limiter import limiter
 
 from cleanup import run_cleanup
 from config import get_settings
 from database import get_supabase
 from scheduler import scheduler
 from routers import profiles, snaps, stories, streaks, discover, messages, human, groups, webhooks
+from routers import auth as auth_router
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 import json
@@ -64,12 +69,18 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     swagger_ui_parameters={
-        "tryItOutEnabled": False,           # read-only docs
-        "defaultModelsExpandDepth": -1,     # hide models section
+        "tryItOutEnabled": False,
+        "defaultModelsExpandDepth": -1,
         "displayRequestDuration": False,
     },
     lifespan=lifespan,
 )
+
+# ── Rate limiting ──────────────────────────────────────────────────────────
+limiter.default_limits = [settings.rate_limit_api]
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -116,6 +127,7 @@ app.include_router(messages.router, prefix=PREFIX)
 app.include_router(human.router,    prefix=PREFIX)
 app.include_router(groups.router,   prefix=PREFIX)
 app.include_router(webhooks.router, prefix=PREFIX)
+app.include_router(auth_router.router, prefix=PREFIX)
 
 
 # ── Static Frontend ────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ import secrets
 from typing import Optional
 from fastapi import Depends, HTTPException, Security, status, Request
 from fastapi.security import APIKeyHeader, HTTPBearer, HTTPAuthorizationCredentials
+from jose import jwt, JWTError
 from supabase import Client
 
 from database import get_supabase
@@ -62,17 +63,15 @@ async def get_current_human(
     token: HTTPAuthorizationCredentials = Depends(HTTP_BEARER),
     db: Client = Depends(get_supabase),
 ) -> dict:
-    """Resolve Supabase JWT → Human user dict from auth.users."""
+    """Resolve SnapClaw-issued JWT → human user dict."""
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing human Bearer token")
-        
     try:
-        res = db.auth.get_user(token.credentials)
-        if not res.user:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid human token")
-        return {"id": res.user.id, "email": res.user.email}
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+        settings = get_settings()
+        payload = jwt.decode(token.credentials, settings.jwt_secret, algorithms=["HS256"])
+        return {"id": payload["sub"], "username": payload.get("username", "")}
+    except JWTError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid token: {exc}")
 
 
 async def get_bot_or_human(

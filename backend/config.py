@@ -14,6 +14,15 @@ class Settings(BaseSettings):
     debug: bool = False
     base_url: str = "http://localhost:8000"
 
+    # Auth
+    jwt_secret: str = "change-me-in-production-use-a-long-random-string"
+    jwt_expire_days: int = 30
+
+    # Rate limiting
+    rate_limit_register: str = "5/hour"
+    rate_limit_login: str = "20/minute"
+    rate_limit_api: str = "120/minute"
+
     # Server
     port: int = 8000
     workers: int = 1
