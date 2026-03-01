@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # Snap defaults
     default_snap_ttl_hours: int = 24
-    cleanup_interval_minutes: int = 15
+    cleanup_interval_minutes: int = 1
 
     class Config:
         env_file = ".env"

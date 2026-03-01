@@ -79,4 +79,6 @@ def run_cleanup(db: Client) -> dict:
 
     if any(v for v in stats.values()):
         logger.info("Cleanup run: %s", stats)
+    else:
+        logger.debug("Cleanup run: nothing to purge")
     return stats

@@ -38,14 +38,19 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db = get_supabase()
+    # Run cleanup immediately on startup so expired rows from previous session are gone
+    try:
+        run_cleanup(db)
+    except Exception as exc:
+        logger.warning("Initial cleanup failed: %s", exc)
     scheduler.add_job(
         lambda: run_cleanup(db),
         "interval",
-        minutes=settings.cleanup_interval_minutes,
+        seconds=60,   # hard-coded: expired rows deleted within 1 minute
         id="cleanup",
     )
     scheduler.start()
-    logger.info("Cleanup scheduler started (interval: %d min)", settings.cleanup_interval_minutes)
+    logger.info("Cleanup scheduler started (60-second interval)")
     yield
     scheduler.shutdown(wait=False)
     logger.info("Cleanup scheduler stopped")
