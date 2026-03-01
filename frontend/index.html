@@ -107,20 +107,11 @@ function sc_doLogout(){
 function sc_showMigrate(){
   document.getElementById('migrate-box').style.display='block';
   document.getElementById('mig-email').focus();
-  // Ensure Supabase client is ready for migration
-  if(!_supabase&&typeof window.supabase!=='undefined'){
-    fetch('/api/v1/config').then(function(r){return r.ok?r.json():null;}).then(function(cfg){
-      if(cfg)_supabase=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
-    }).catch(function(){});
-  }
 }
 function sc_hideMigrate(){
   document.getElementById('migrate-box').style.display='none';
 }
 function sc_doMigrate(){
-  if(!_supabase){
-    var e2=document.getElementById('mig-error');e2.innerText='Still connecting to Supabase, please wait…';e2.style.display='block';return;
-  }
   var email=document.getElementById('mig-email').value.trim();
   var oldpass=document.getElementById('mig-oldpass').value;
   var newuser=document.getElementById('mig-username').value.trim().toLowerCase();
@@ -129,21 +120,21 @@ function sc_doMigrate(){
     var e2=document.getElementById('mig-error');e2.innerText='Fill in all fields.';e2.style.display='block';return;
   }
   var e2=document.getElementById('mig-error'),msg=document.getElementById('mig-msg');
-  e2.style.display='none';msg.innerText='Verifying old account…';msg.style.display='block';
-  _supabase.auth.signInWithPassword({email:email,password:oldpass}).then(function(r){
-    if(r.error){msg.style.display='none';e2.innerText=r.error.message;e2.style.display='block';return;}
-    var supaToken=r.data.session.access_token;
-    msg.innerText='Migrating…';
-    fetch('/api/v1/auth/migrate',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({supabase_token:supaToken,username:newuser,password:newpass})})
-    .then(function(res){return res.json().then(function(d){return{ok:res.ok,d:d};});})
-    .then(function(res){
-      if(!res.ok){msg.style.display='none';e2.innerText=res.d.detail||'Migration failed';e2.style.display='block';return;}
-      msg.style.display='none';
-      sc_hideMigrate();
-      sc_loginOk(res.d);
-    }).catch(function(err){msg.style.display='none';e2.innerText='Migration failed: '+err.message;e2.style.display='block';});
-  }).catch(function(err){msg.style.display='none';e2.innerText='Login failed: '+err.message;e2.style.display='block';});
+  e2.style.display='none';msg.innerText='Migrating…';msg.style.display='block';
+  fetch('/api/v1/auth/migrate',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({email:email,old_password:oldpass,username:newuser,password:newpass})})
+  .then(function(res){
+    return res.text().then(function(txt){
+      var d;try{d=JSON.parse(txt);}catch(e){d={detail:txt||'Server error'};}
+      return{ok:res.ok,d:d};
+    });
+  })
+  .then(function(res){
+    if(!res.ok){msg.style.display='none';e2.innerText=res.d.detail||'Migration failed';e2.style.display='block';return;}
+    msg.style.display='none';
+    sc_hideMigrate();
+    sc_loginOk(res.d);
+  }).catch(function(err){msg.style.display='none';e2.innerText='Migration failed: '+err.message;e2.style.display='block';});
 }
 
 function sc_authError(msg){

@@ -6,7 +6,7 @@ JWTs are issued by SnapClaw, verified locally (no Supabase auth call per request
 
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 from passlib.context import CryptContext
 from jose import jwt
 from supabase import Client
@@ -17,6 +17,7 @@ from limiter import limiter
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 
 # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -44,10 +45,10 @@ class AuthRequest(BaseModel):
 
 
 class MigrateRequest(BaseModel):
-    supabase_token: str
+    email: str
+    old_password: str
     username: str
     password: str
-
 
 # ── endpoints ─────────────────────────────────────────────────────────────
 
@@ -62,16 +63,14 @@ async def register(
     username = payload.username.strip().lower()
 
     if len(username) < 3 or len(username) > 30:
-        raise HTTPException(400, "Username must be 3–30 characters")
+        raise HTTPException(400, "Username must be 3-30 characters")
     allowed = set("abcdefghijklmnopqrstuvwxyz0123456789_-")
     if not all(c in allowed for c in username):
         raise HTTPException(400, "Username may only contain letters, numbers, _ and -")
-
     if len(payload.password) < 6:
         raise HTTPException(400, "Password must be at least 6 characters")
 
     ip = _get_ip(request)
-
     if ip not in ("127.0.0.1", "::1", "unknown"):
         try:
             existing_ip = db.table("human_users").select("id").eq("ip_address", ip).execute()
@@ -130,54 +129,61 @@ async def migrate_from_supabase(
     payload: MigrateRequest,
     db: Client = Depends(get_supabase),
 ):
-    """Migrate an old Supabase email account to the new username+password system.
-    Pass the Supabase JWT (obtained by logging in via Supabase on the client),
-    choose a new username and password. Bot ownership is preserved.
     """
-    # Verify old Supabase JWT
+    Migrate an old Supabase email account to the new username+password system.
+    Verifies email+password directly on the server.
+    Bot ownership is preserved by reusing the same UUID as the primary key.
+    """
+    from supabase import create_client
+    settings = get_settings()
+
+    # Sign in with old email+password using anon key (not service role)
     try:
-        user_res = db.auth.get_user(payload.supabase_token)
-        if not user_res.user:
-            raise HTTPException(401, "Could not verify old Supabase session")
-        supabase_id = user_res.user.id
-        supabase_email = user_res.user.email or ""
+        anon_client = create_client(settings.supabase_url, settings.supabase_anon_key)
+        sign_in = anon_client.auth.sign_in_with_password({
+            "email": payload.email.strip().lower(),
+            "password": payload.old_password,
+        })
+        if not sign_in.user:
+            raise HTTPException(401, "Could not verify old email account - check email and password")
+        supabase_id = sign_in.user.id
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(401, f"Invalid Supabase token: {exc}")
+        raise HTTPException(401, f"Old account verification failed: {exc}")
 
     username = payload.username.strip().lower()
     if len(username) < 3 or len(username) > 30:
-        raise HTTPException(400, "Username must be 3–30 characters")
+        raise HTTPException(400, "Username must be 3-30 characters")
     allowed = set("abcdefghijklmnopqrstuvwxyz0123456789_-")
     if not all(c in allowed for c in username):
         raise HTTPException(400, "Username may only contain letters, numbers, _ and -")
     if len(payload.password) < 6:
         raise HTTPException(400, "Password must be at least 6 characters")
 
-    # Check if this Supabase account was already migrated
-    already = db.table("human_users").select("id, username").eq("id", supabase_id).execute()
-    if already.data:
-        # Already migrated — just return a fresh token
-        user = already.data[0]
-        token = _issue_jwt(user["id"], user["username"])
-        return {"token": token, "username": user["username"], "id": user["id"], "migrated": False}
+    # Already migrated? Issue a fresh token.
+    try:
+        already = db.table("human_users").select("id, username").eq("id", supabase_id).execute()
+        if already.data:
+            user = already.data[0]
+            token = _issue_jwt(user["id"], user["username"])
+            return {"token": token, "username": user["username"], "id": user["id"], "migrated": False}
+    except Exception:
+        pass
 
-    # Check username not taken
+    # Check new username not taken
     name_taken = db.table("human_users").select("id").eq("username", username).execute()
     if name_taken.data:
-        raise HTTPException(400, "Username already taken — choose another")
+        raise HTTPException(400, "Username already taken - choose another")
 
     pw_hash = _pwd.hash(payload.password)
     ip = _get_ip(request)
     try:
-        # Use the Supabase UUID as the primary key so bot_profiles.owner_id still links correctly
         res = db.table("human_users").insert({
             "id": supabase_id,
             "username": username,
             "password_hash": pw_hash,
             "ip_address": ip,
-            "migrated_from_email": supabase_email,
         }).execute()
     except Exception as exc:
         raise HTTPException(500, f"Migration failed: {exc}")
@@ -185,5 +191,3 @@ async def migrate_from_supabase(
     user = res.data[0]
     token = _issue_jwt(user["id"], user["username"])
     return {"token": token, "username": user["username"], "id": user["id"], "migrated": True}
-
-
