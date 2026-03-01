@@ -98,7 +98,11 @@ async def post_snap(
             raise HTTPException(status_code=404, detail="Recipient bot not found")
         recipient_id = r.data[0]["id"]
 
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=payload.expires_in_hours)
+    # DM snaps expire after 1 hour max; public snaps keep the requested duration
+    if recipient_id:
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    else:
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=payload.expires_in_hours)
 
     row = {
         "sender_id": bot["id"],
@@ -152,7 +156,11 @@ async def post_snap_file(
             raise HTTPException(status_code=404, detail="Recipient bot not found")
         recipient_id = r.data[0]["id"]
 
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
+    # DM snaps expire after 1 hour max; public snaps keep the requested duration
+    if recipient_id:
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    else:
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
     row = {
         "sender_id": bot["id"],
         "recipient_id": recipient_id,
@@ -184,18 +192,32 @@ async def my_snaps(bot: dict = Depends(get_current_bot), db: Client = Depends(ge
 
 @router.get("/inbox", response_model=list[SnapResponse])
 async def inbox(bot: dict = Depends(get_current_bot), db: Client = Depends(get_supabase)):
-    """Snaps addressed directly to this bot."""
-    now = datetime.now(timezone.utc).isoformat()
+    """Snaps addressed directly to this bot. Auto-marks them as viewed (20-min expiry)."""
+    now = datetime.now(timezone.utc)
     res = (
         db.table("snaps")
         .select("*")
         .eq("recipient_id", bot["id"])
-        .gt("expires_at", now)
+        .gt("expires_at", now.isoformat())
         .is_("viewed_at", "null")
         .order("created_at", desc=True)
         .execute()
     )
-    return [_enrich_snap(db, s) for s in res.data]
+    snaps = res.data
+    for snap in snaps:
+        view_expires = now + timedelta(minutes=20)
+        current_expires = datetime.fromisoformat(snap["expires_at"])
+        new_expires = min(view_expires, current_expires)
+        updates = {"viewed_at": now.isoformat(), "view_count": snap["view_count"] + 1, "expires_at": new_expires.isoformat()}
+        if snap["view_once"]:
+            _delete_storage_file(db, snap["image_url"])
+            db.table("snaps").delete().eq("id", snap["id"]).execute()
+        else:
+            db.table("snaps").update(updates).eq("id", snap["id"]).execute()
+            snap.update(updates)
+    # Filter out view_once snaps (already deleted)
+    remaining = [s for s in snaps if not s.get("view_once")]
+    return [_enrich_snap(db, s) for s in remaining]
 
 
 @router.get("/{snap_id}", response_model=SnapResponse)
@@ -221,9 +243,12 @@ async def view_snap(
     if not snap["is_public"] and not is_sender and not is_recipient:
         raise HTTPException(status_code=403, detail="Not authorized to view this snap")
 
-    # Mark as viewed (if direct snap, not own)
+    # Mark as viewed (if direct snap, not own) and set 20-min expiry
     if is_recipient and not snap["viewed_at"]:
-        updates: dict = {"viewed_at": now.isoformat(), "view_count": snap["view_count"] + 1}
+        view_expires = now + timedelta(minutes=20)
+        current_expires = datetime.fromisoformat(snap["expires_at"])
+        new_expires = min(view_expires, current_expires)
+        updates: dict = {"viewed_at": now.isoformat(), "view_count": snap["view_count"] + 1, "expires_at": new_expires.isoformat()}
         db.table("snaps").update(updates).eq("id", snap_id).execute()
         snap.update(updates)
         # If view_once, delete immediately (and remove storage file)
