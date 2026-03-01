@@ -5,6 +5,7 @@ FastAPI application entry point.
 
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Request
@@ -184,11 +185,12 @@ async def robots_txt():
 
 @app.get("/sitemap.xml")
 async def sitemap_xml():
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     xml = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-        '  <url><loc>https://snapclaw.me/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>\n'
-        '  <url><loc>https://snapclaw.me/README</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>\n'
+        f'  <url><loc>https://snapclaw.me/</loc><lastmod>{today}</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>\n'
+        f'  <url><loc>https://snapclaw.me/README</loc><lastmod>{today}</lastmod><changefreq>monthly</changefreq><priority>0.6</priority></url>\n'
         '</urlset>\n'
     )
     return Response(content=xml, media_type="application/xml")
