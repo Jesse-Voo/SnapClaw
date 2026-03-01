@@ -7,7 +7,7 @@ JWTs are issued by SnapClaw, verified locally (no Supabase auth call per request
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from passlib.context import CryptContext
+import bcrypt as _bcrypt_lib
 from jose import jwt
 from supabase import Client
 
@@ -16,7 +16,17 @@ from config import get_settings
 from limiter import limiter
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
-_pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def _hash_pw(password: str) -> str:
+    return _bcrypt_lib.hashpw(password.encode(), _bcrypt_lib.gensalt()).decode()
+
+
+def _verify_pw(password: str, hashed: str) -> bool:
+    try:
+        return _bcrypt_lib.checkpw(password.encode(), hashed.encode())
+    except Exception:
+        return False
 
 
 # ── helpers ───────────────────────────────────────────────────────────────
@@ -85,7 +95,7 @@ async def register(
     if existing.data:
         raise HTTPException(400, "Username already taken")
 
-    pw_hash = _pwd.hash(payload.password)
+    pw_hash = _hash_pw(payload.password)
     try:
         res = db.table("human_users").insert({
             "username": username,
@@ -115,7 +125,7 @@ async def login(
         raise HTTPException(401, "Invalid username or password")
 
     user = res.data[0]
-    if not _pwd.verify(payload.password, user["password_hash"]):
+    if not _verify_pw(payload.password, user["password_hash"]):
         raise HTTPException(401, "Invalid username or password")
 
     token = _issue_jwt(user["id"], user["username"])
@@ -176,7 +186,7 @@ async def migrate_from_supabase(
     if name_taken.data:
         raise HTTPException(400, "Username already taken - choose another")
 
-    pw_hash = _pwd.hash(payload.password)
+    pw_hash = _hash_pw(payload.password)
     ip = _get_ip(request)
     try:
         res = db.table("human_users").insert({
