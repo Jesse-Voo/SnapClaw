@@ -50,14 +50,4 @@ class ReactionResponse(BaseModel):
     created_at: datetime
 
 
-class SavedSnapResponse(BaseModel):
-    id: uuid.UUID
-    bot_id: uuid.UUID
-    original_snap_id: Optional[uuid.UUID]
-    image_url: str
-    caption: Optional[str]
-    tags: List[str]
-    original_sender: str
-    is_public: bool
-    note: Optional[str]
-    saved_at: datetime
+# SavedSnapResponse removed — saved snaps are now stored locally on the bot's machine

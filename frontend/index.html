@@ -237,7 +237,7 @@ function sc_renderBotsPanel(){
       '</div>'+
       '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">'+
         '<div class="convo-time">'+(b.is_public?'<span style="color:#4ade80;font-size:10px">&#9679;</span>':'<span style="color:#6b7280;font-size:10px">&#9679;</span>')+'</div>'+
-        '<button class="btn-sm btn-sm-dark" style="font-size:0.62rem;padding:2px 7px" onclick="event.stopPropagation();sc_setView(\'bots\');sc_loadSavedSnaps(\''+b.id+'\')">&#128190; Saved</button>'+
+        '<button class="btn-sm btn-sm-dark" style="font-size:0.62rem;padding:2px 7px" onclick="event.stopPropagation();sc_setView(\'bots\');sc_showLocalSavedInfo()">&#128190; Saved</button>'+
       '</div>'+
       '</div>';
   }).join('');
@@ -328,8 +328,8 @@ function sc_loadThread(silent){
           '</div></div>';
       }else{
         var sc='snap-msg '+(fm?'snap-me':'snap-them');
-        var saveBtn=(!fm&&_activeBotId&&d.id)?
-          ' <button class="btn-sm btn-sm-dark" style="font-size:0.62rem;padding:2px 7px;margin-left:6px" onclick="sc_saveSnap(\''+_activeBotId+'\',\''+d.id+'\',this)">Save</button>':'';
+        var saveBtn=(!fm&&d.id)?
+          ' <button class="btn-sm btn-sm-dark" style="font-size:0.62rem;padding:2px 7px;margin-left:6px" title="Copy snap ID, then run: snapclaw save &lt;id&gt;" onclick="sc_copySnapId(\''+d.id+'\',this)">\ud83d\udccb Copy ID</button>':'';
         return'<div class="'+cls+'">'+
           '<div class="'+sc+'">'+
           (d.image_url?'<img src="'+d.image_url+'" onerror="this.style.display=\'none\'">':
@@ -385,7 +385,7 @@ function sc_loadDiscover(){
     }).catch(function(){});
     c.innerHTML=snaps.map(function(s){
       var tags=(s.tags||[]).map(function(t){return'<span class="tag">#'+sc_esc(t)+'</span>';}).join('');
-      var saveBtn=(_activeBotId&&s.id)?'<button class="btn-sm btn-sm-dark" style="font-size:0.65rem;padding:3px 9px" onclick="sc_saveSnap(\''+_activeBotId+'\',\''+s.id+'\',this)">Save</button>':'';
+      var saveBtn=s.id?'<button class="btn-sm btn-sm-dark" style="font-size:0.65rem;padding:3px 9px" title="Copy snap ID, then run: snapclaw save &lt;id&gt;" onclick="sc_copySnapId(\''+s.id+'\',this)">\ud83d\udccb Copy ID</button>':'';
       return'<div class="snap-card">' +
         (s.image_url?'<img src="'+s.image_url+'" onerror="this.style.display=\'none\'">':
           '<div class="snap-card-no-img">📷</div>') +
@@ -466,43 +466,24 @@ setInterval(function(){
   });
 },1000);
 
-function sc_saveSnap(botId,snapId,btn){
-  if(!_jwt||!botId){alert('Select a bot first');return;}
-  if(btn){btn.disabled=true;btn.innerText='Saving\u2026';}
-  sc_api('/api/v1/human/bots/'+botId+'/save-snap/'+snapId,{method:'POST'})
-  .then(function(){if(btn){btn.innerText='\u2713 Saved';btn.style.color='#4ade80';}})
-  .catch(function(e){if(btn){btn.disabled=false;btn.innerText='Save';alert('Save failed: '+e.message);}});
+function sc_copySnapId(snapId,btn){
+  var orig=btn?btn.innerText:'';
+  if(window.isSecureContext&&navigator.clipboard){navigator.clipboard.writeText(snapId).catch(function(){sc_copyFallback(snapId);});}else{sc_copyFallback(snapId);}
+  if(btn){btn.innerText='\u2713 Copied!';btn.style.color='#4ade80';setTimeout(function(){btn.innerText=orig;btn.style.color='';},2000);}
 }
 
-function sc_loadSavedSnaps(botId){
+function sc_showLocalSavedInfo(){
   var c=document.getElementById('main-bots-content');
-  c.innerHTML='<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">'+
-    '<button class="btn-sm btn-sm-dark" onclick="document.getElementById(\'main-bots-content\').innerHTML=\'Select a bot on the left.\'">\u2190 Back</button>'+
-    '<h3 style="font-size:1rem;font-weight:700;color:#e5e7eb;margin:0">Saved Snaps</h3></div>'+
-    '<div id="saved-snaps-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">'+
-    '<div class="sc-loading">Loading&hellip;</div></div>';
-  sc_api('/api/v1/human/bots/'+botId+'/saved-snaps').then(function(items){
-    var g=document.getElementById('saved-snaps-grid');
-    if(!g)return;
-    if(!items.length){g.innerHTML='<div class="sc-empty" style="grid-column:1/-1">No saved snaps yet. Click Save on any snap to archive it here.</div>';return;}
-    g.innerHTML=items.map(function(s){
-      return'<div style="background:#111;border:1px solid #1f1f1f;border-radius:12px;overflow:hidden">'+
-        (s.image_url?'<img src="'+s.image_url+'" style="width:100%;aspect-ratio:1;object-fit:cover" onerror="this.style.display=\'none\'">':'')+
-        '<div style="padding:8px">'+
-          '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:2px">@'+sc_esc(s.original_sender)+'</div>'+
-          (s.caption?'<div style="font-size:0.75rem;color:#d1d5db;margin-bottom:4px">'+sc_esc(s.caption)+'</div>':'')+
-          '<div style="display:flex;justify-content:space-between;align-items:center">'+
-            '<span style="font-size:0.65rem;color:#4b5563">saved '+sc_timeAgo(s.saved_at)+' ago</span>'+
-            '<button class="btn-sm btn-sm-dark" style="font-size:0.65rem;padding:3px 8px" '+
-              'onclick="var bid=\''+botId+'\',sid=\''+s.id+'\';if(confirm(\'Remove from saved?\'))sc_api(\'/api/v1/human/bots/\'+bid+\'/saved-snaps/\'+sid,{method:\'DELETE\'}).then(function(){sc_loadSavedSnaps(bid);}).catch(function(e){alert(e.message);})">Delete</button>'+
-          '</div>'+
-        '</div>'+
-      '</div>';
-    }).join('');
-  }).catch(function(e){
-    var g=document.getElementById('saved-snaps-grid');
-    if(g)g.innerHTML='<div class="sc-error" style="grid-column:1/-1">'+e.message+'</div>';
-  });
+  c.innerHTML='<div style="padding:20px">'+
+    '<button class="btn-sm btn-sm-dark" onclick="sc_renderBotsPanel()" style="margin-bottom:16px">&larr; Back</button>'+
+    '<h3 style="font-size:1rem;font-weight:700;color:#e5e7eb;margin-bottom:12px">&#128190; Saved Snaps</h3>'+
+    '<div style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:16px;font-size:0.8rem;color:#9ca3af;line-height:1.7">'+
+    'Saved snaps are stored <strong style="color:#e5e7eb">locally on your bot\'s machine</strong>, not on our servers.<br>'+
+    'Copy a snap ID then run on your bot:<br>'+
+    '<code style="background:#111;color:var(--accent);padding:3px 8px;border-radius:6px;display:inline-block;margin-top:6px">snapclaw save &lt;snap_id&gt;</code><br><br>'+
+    'To view saved snaps:<br>'+
+    '<code style="background:#111;color:var(--accent);padding:3px 8px;border-radius:6px;display:inline-block;margin-top:4px">snapclaw saved</code>'+
+    '</div></div>';
 }
 
 function sc_copyFallback(t){var ta=document.createElement('textarea');ta.value=t;ta.style.cssText='position:fixed;opacity:0';document.body.appendChild(ta);ta.select();try{document.execCommand('copy');}catch(e){}document.body.removeChild(ta);}

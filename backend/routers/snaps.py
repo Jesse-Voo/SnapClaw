@@ -16,7 +16,7 @@ from supabase import Client
 from auth import get_current_bot
 from config import get_settings
 from database import get_supabase
-from models.snap import PostSnapRequest, SnapResponse, ReactionResponse, ReactToSnapRequest, SavedSnapResponse
+from models.snap import PostSnapRequest, SnapResponse, ReactionResponse, ReactToSnapRequest
 
 router = APIRouter(prefix="/snaps", tags=["Snaps"])
 settings = get_settings()
@@ -269,79 +269,6 @@ async def delete_snap(snap_id: str, bot: dict = Depends(get_current_bot), db: Cl
         raise HTTPException(status_code=403, detail="Not your snap")
     _delete_storage_file(db, res.data["image_url"])
     db.table("snaps").delete().eq("id", snap_id).execute()
-
-
-# ── Saved Snaps ────────────────────────────────────────────────────────────
-
-@router.get("/saved", response_model=list[SavedSnapResponse])
-async def list_saved_snaps(bot: dict = Depends(get_current_bot), db: Client = Depends(get_supabase)):
-    """Return all snaps this bot has saved to its local archive."""
-    res = (
-        db.table("saved_snaps")
-        .select("*")
-        .eq("bot_id", bot["id"])
-        .order("saved_at", desc=True)
-        .execute()
-    )
-    return res.data or []
-
-
-@router.post("/{snap_id}/save", response_model=SavedSnapResponse, status_code=201)
-async def save_snap(
-    snap_id: str,
-    bot: dict = Depends(get_current_bot),
-    db: Client = Depends(get_supabase),
-):
-    """Save a snap to this bot's personal archive before it expires."""
-    res = db.table("snaps").select("*").eq("id", snap_id).single().execute()
-    if not res.data:
-        raise HTTPException(status_code=404, detail="Snap not found")
-    snap = res.data
-
-    # Access check: must be sender, recipient, or a public snap
-    is_sender = snap["sender_id"] == bot["id"]
-    is_recipient = snap.get("recipient_id") == bot["id"]
-    if not snap["is_public"] and not is_sender and not is_recipient:
-        raise HTTPException(status_code=403, detail="Not authorized to save this snap")
-
-    # Already saved? Return existing record
-    existing = (
-        db.table("saved_snaps")
-        .select("*")
-        .eq("bot_id", bot["id"])
-        .eq("original_snap_id", snap_id)
-        .execute()
-    )
-    if existing.data:
-        return SavedSnapResponse(**existing.data[0])
-
-    sender = db.table("bot_profiles").select("username").eq("id", snap["sender_id"]).execute()
-    sender_name = sender.data[0]["username"] if sender.data else "unknown"
-
-    row = {
-        "bot_id": bot["id"],
-        "original_snap_id": snap_id,
-        "image_url": snap["image_url"],
-        "caption": snap.get("caption"),
-        "tags": snap.get("tags", []),
-        "original_sender": sender_name,
-        "is_public": snap.get("is_public", False),
-    }
-    result = db.table("saved_snaps").insert(row).execute()
-    return SavedSnapResponse(**result.data[0])
-
-
-@router.delete("/saved/{saved_id}", status_code=204)
-async def delete_saved_snap(
-    saved_id: str,
-    bot: dict = Depends(get_current_bot),
-    db: Client = Depends(get_supabase),
-):
-    """Remove a snap from this bot's personal archive."""
-    res = db.table("saved_snaps").select("bot_id").eq("id", saved_id).single().execute()
-    if not res.data or res.data["bot_id"] != bot["id"]:
-        raise HTTPException(status_code=403, detail="Not your saved snap")
-    db.table("saved_snaps").delete().eq("id", saved_id).execute()
 
 
 # ── Streak helper ──────────────────────────────────────────────────────────

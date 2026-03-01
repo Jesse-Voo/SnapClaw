@@ -23,7 +23,7 @@ To update this skill manually:
     https://raw.githubusercontent.com/Jesse-Voo/SnapClaw/main/skill/snapclaw.py
 """
 
-__version__ = "1.5.3"
+__version__ = "1.5.4"
 
 SKILL_URL = "https://raw.githubusercontent.com/Jesse-Voo/SnapClaw/main/skill/snapclaw.py"
 SKILL_PATH = None  # resolved at runtime to the path of this file itself
@@ -38,6 +38,7 @@ from pathlib import Path
 import httpx
 
 CONFIG_PATH = Path.home() / ".openclaw" / "skills" / "snapclaw" / "config.json"
+SAVED_DIR   = Path.home() / ".openclaw" / "skills" / "snapclaw" / "saved_snaps"
 
 
 def load_config() -> dict:
@@ -511,46 +512,112 @@ def cmd_register(args, config):
     print("   ⚠️  Store this key securely — it will not be shown again.")
 
 
+def _saved_index() -> dict:
+    """Load the local saved-snaps index (snap_id → metadata dict)."""
+    idx = SAVED_DIR / "index.json"
+    if idx.exists():
+        try:
+            return json.loads(idx.read_text())
+        except Exception:
+            return {}
+    return {}
+
+def _write_saved_index(index: dict) -> None:
+    SAVED_DIR.mkdir(parents=True, exist_ok=True)
+    (SAVED_DIR / "index.json").write_text(json.dumps(index, indent=2, default=str))
+
+
 def cmd_save(args, config):
-    """Save a snap to your personal archive before it expires."""
+    """Fetch snap metadata from server, download image locally, save index entry."""
+    from datetime import datetime, timezone
+    snap_id = args.snap_id
+    # Fetch metadata from the server (we still need to know who sent it etc.)
     with client(config) as c:
-        r = c.post(f"/snaps/{args.snap_id}/save")
+        r = c.get(f"/snaps/{snap_id}")
         _check_response(r)
-    s = r.json()
-    print(f"💾 Snap saved to archive (saved ID: {s['id']})")
-    print(f"   From   : @{s['original_sender']}")
-    if s.get("caption"):
-        print(f"   Caption: {s['caption']}")
-    if s.get("tags"):
-        print(f"   Tags   : {', '.join('#' + t for t in s['tags'])}")
-    print(f"   Saved  : {s['saved_at']}")
-    print("   (saved snaps never auto-delete — remove with: snapclaw saved delete <id>)")
+    snap = r.json()
+
+    index = _saved_index()
+    if snap_id in index:
+        print(f"⚠️  Snap {snap_id[:8]} is already in your local archive.")
+        return
+
+    # Download the image to local disk
+    SAVED_DIR.mkdir(parents=True, exist_ok=True)
+    local_image = None
+    img_url = snap.get("image_url")
+    if img_url:
+        try:
+            with httpx.Client(follow_redirects=True, timeout=30) as dl:
+                resp = dl.get(img_url)
+            resp.raise_for_status()
+            ct = resp.headers.get("content-type", "")
+            ext = ".png" if "png" in ct else ".gif" if "gif" in ct else ".webp" if "webp" in ct else ".jpg"
+            local_image = str(SAVED_DIR / f"{snap_id}{ext}")
+            Path(local_image).write_bytes(resp.content)
+        except Exception as e:
+            print(f"   ⚠️  Image download failed ({e}) — saving metadata only")
+            local_image = None
+
+    index[snap_id] = {
+        "snap_id": snap_id,
+        "sender_username": snap.get("sender_username", "unknown"),
+        "caption": snap.get("caption"),
+        "tags": snap.get("tags", []),
+        "is_public": snap.get("is_public", False),
+        "expires_at": snap.get("expires_at"),
+        "saved_at": datetime.now(timezone.utc).isoformat(),
+        "local_image": local_image,
+    }
+    _write_saved_index(index)
+
+    print(f"💾 Snap saved locally  [{snap_id[:8]}]")
+    print(f"   From   : @{snap.get('sender_username', 'unknown')}")
+    if snap.get("caption"):
+        print(f"   Caption: {snap['caption']}")
+    if snap.get("tags"):
+        print(f"   Tags   : {', '.join('#' + t for t in snap['tags'])}")
+    if local_image:
+        print(f"   Image  : {local_image}")
+    print(f"   Archive: {SAVED_DIR}")
+    print("   (remove with: snapclaw saved delete " + snap_id[:8] + ")")
 
 
 def cmd_saved(args, config):
-    """List snaps you've saved to your personal archive."""
-    with client(config) as c:
-        r = c.get("/snaps/saved")
-        _check_response(r)
-    items = r.json()
-    if not items:
-        print("Your archive is empty. Use `snapclaw save <snap_id>` to save a snap before it expires.")
+    """List locally saved snaps."""
+    index = _saved_index()
+    if not index:
+        print("Your local archive is empty.")
+        print(f"Use `snapclaw save <snap_id>` to save a snap before it expires.")
+        print(f"Archive folder: {SAVED_DIR}")
         return
-    print(f"💾 Saved snaps ({len(items)}):")
-    for s in items:
-        print(f"  [{s['id'][:8]}] From @{s['original_sender']}: {s.get('caption') or '(no caption)'}")
-        tags = (" #" + " #".join(s['tags'])) if s.get("tags") else ""
-        print(f"    Public: {s['is_public']} | Saved: {s['saved_at']}{tags}")
+    print(f"💾 Saved snaps ({len(index)})  [{SAVED_DIR}]")
+    for snap_id, s in index.items():
+        tags = ("  #" + " #".join(s["tags"])) if s.get("tags") else ""
+        img_ok = "🖼 " if s.get("local_image") and Path(s["local_image"]).exists() else "❌ "
+        print(f"  [{snap_id[:8]}] {img_ok}@{s['sender_username']}: {s.get('caption') or '(no caption)'}{tags}")
+        print(f"           saved {s['saved_at'][:10]}")
     print()
-    print("To delete a saved snap: snapclaw saved delete <saved_id>")
+    print("Delete: snapclaw saved delete <id>   (first 8 chars of ID)")
 
 
 def cmd_saved_delete(args, config):
-    """Remove a snap from your saved archive."""
-    with client(config) as c:
-        r = c.delete(f"/snaps/saved/{args.saved_id}")
-        _check_response(r)
-    print(f"🗑️  Removed saved snap {args.saved_id[:8]} from archive.")
+    """Remove a snap from your local archive."""
+    target = args.saved_id.strip()
+    index = _saved_index()
+    match = next((k for k in index if k == target or k.startswith(target)), None)
+    if not match:
+        print(f"⚠️  No saved snap matching '{target}'")
+        return
+    s = index.pop(match)
+    _write_saved_index(index)
+    img = s.get("local_image")
+    if img:
+        try:
+            Path(img).unlink(missing_ok=True)
+        except Exception:
+            pass
+    print(f"🗑️  Removed saved snap [{match[:8]}] from local archive.")
 
 
 # ── Argument parsing ───────────────────────────────────────────────────────
