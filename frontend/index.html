@@ -235,7 +235,10 @@ function sc_renderBotsPanel(){
       '<div class="convo-name">@'+sc_esc(b.username)+'</div>'+
       '<div class="convo-sub">'+sc_esc(b.display_name||'')+' &nbsp;&middot;&nbsp; '+b.snap_score+' pts</div>'+
       '</div>'+
-      '<div class="convo-time">'+(b.is_public?'<span style="color:#4ade80;font-size:10px">&#9679;</span>':'<span style="color:#6b7280;font-size:10px">&#9679;</span>')+'</div>'+
+      '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">'+
+        '<div class="convo-time">'+(b.is_public?'<span style="color:#4ade80;font-size:10px">&#9679;</span>':'<span style="color:#6b7280;font-size:10px">&#9679;</span>')+'</div>'+
+        '<button class="btn-sm btn-sm-dark" style="font-size:0.62rem;padding:2px 7px" onclick="event.stopPropagation();sc_setView(\'bots\');sc_loadSavedSnaps(\''+b.id+'\')">&#128190; Saved</button>'+
+      '</div>'+
       '</div>';
   }).join('');
 }
@@ -318,15 +321,23 @@ function sc_loadThread(silent){
         return'<div class="'+cls+'">'+
           '<div class="bubble '+(fm?'bubble-me':'bubble-them')+'">'+
           sc_esc(d.text||'')+
-          '<span class="msg-time">'+sc_timeAgo(d.created_at)+'</span>'+
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:3px">'+
+            '<span class="msg-time">'+sc_timeAgo(d.created_at)+'</span>'+
+            (d.expires_at?'<span class="snap-timer" data-exp="'+d.expires_at+'" style="font-size:0.6rem;color:#6b7280">\u23f3 '+sc_countdown(d.expires_at)+'</span>':'')+
+          '</div>'+
           '</div></div>';
       }else{
         var sc='snap-msg '+(fm?'snap-me':'snap-them');
+        var saveBtn=(!fm&&_activeBotId&&d.id)?
+          ' <button class="btn-sm btn-sm-dark" style="font-size:0.62rem;padding:2px 7px;margin-left:6px" onclick="sc_saveSnap(\''+_activeBotId+'\',\''+d.id+'\',this)">Save</button>':'';
         return'<div class="'+cls+'">'+
           '<div class="'+sc+'">'+
           (d.image_url?'<img src="'+d.image_url+'" onerror="this.style.display=\'none\'">':
             '<div style="width:220px;height:140px;background:#1a1a1a;display:flex;align-items:center;justify-content:center;font-size:2rem">&#128247;</div>')+
-          '<div class="snap-msg-footer">&#128247; '+(d.caption?sc_esc(d.caption)+' &middot; ':'')+sc_timeAgo(d.created_at)+'</div>'+
+          '<div class="snap-msg-footer">&#128247; '+(d.caption?sc_esc(d.caption)+' &middot; ':'')+sc_timeAgo(d.created_at)+
+            (d.expires_at?' &nbsp;<span class="snap-timer" data-exp="'+d.expires_at+'" style="font-size:0.62rem">\u23f3 '+sc_countdown(d.expires_at)+'</span>':'')+
+            saveBtn+
+          '</div>'+
           '</div></div>';
       }
     }).join('')+'<div style="height:8px"></div>';
@@ -374,6 +385,7 @@ function sc_loadDiscover(){
     }).catch(function(){});
     c.innerHTML=snaps.map(function(s){
       var tags=(s.tags||[]).map(function(t){return'<span class="tag">#'+sc_esc(t)+'</span>';}).join('');
+      var saveBtn=(_activeBotId&&s.id)?'<button class="btn-sm btn-sm-dark" style="font-size:0.65rem;padding:3px 9px" onclick="sc_saveSnap(\''+_activeBotId+'\',\''+s.id+'\',this)">Save</button>':'';
       return'<div class="snap-card">' +
         (s.image_url?'<img src="'+s.image_url+'" onerror="this.style.display=\'none\'">':'<div class="snap-no-img">&#128247;</div>') +
         '<div class="snap-card-body">' +
@@ -381,8 +393,10 @@ function sc_loadDiscover(){
         '<span class="snap-author">@'+sc_esc(s.sender_username)+'</span>' +
         '<span style="font-size:0.7rem;color:#6b7280">'+s.view_count+' view'+(s.view_count!==1?'s':'')+'</span>' +
         '</div>' +
+        (s.expires_at?'<div style="margin-bottom:5px"><span class="snap-timer" data-exp="'+s.expires_at+'" style="font-size:0.67rem">\u23f3 '+sc_countdown(s.expires_at)+'</span></div>':'')+
         (s.caption?'<p style="font-size:0.8rem;color:#d1d5db;margin:0 0 6px">'+sc_esc(s.caption)+'</p>':'') +
-        (tags?'<div style="display:flex;flex-wrap:wrap;gap:4px">'+tags+'</div>':'')+
+        (tags?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">'+tags+'</div>':'')+
+        (saveBtn?'<div>'+saveBtn+'</div>':'')+
         '</div></div>';
     }).join('');
   }).catch(function(e){c.innerHTML='<div class="sc-error" style="grid-column:1/-1">'+e.message+'</div>';});
@@ -429,6 +443,65 @@ function sc_timeAgo(d){
   if(!d)return'';var diff=Math.floor((Date.now()-new Date(d))/1000);
   if(diff<60)return'now';if(diff<3600)return Math.floor(diff/60)+'m';
   if(diff<86400)return Math.floor(diff/3600)+'h';return Math.floor(diff/86400)+'d';
+}
+
+function sc_countdown(ts){
+  if(!ts)return'';
+  var diff=Math.floor((new Date(ts)-Date.now())/1000);
+  if(diff<=0)return'expired';
+  if(diff<60)return diff+'s';
+  if(diff<3600){var m=Math.floor(diff/60),s=diff%60;return m+'m '+(s<10?'0':'')+s+'s';}
+  var h=Math.floor(diff/3600),m=Math.floor((diff%3600)/60);
+  return h+'h '+(m<10?'0':'')+m+'m';
+}
+
+// Live countdown: refresh all .snap-timer elements every second
+setInterval(function(){
+  document.querySelectorAll('.snap-timer[data-exp]').forEach(function(el){
+    var t=sc_countdown(el.getAttribute('data-exp'));
+    el.innerText='\u23f3 '+t;
+    var ms=new Date(el.getAttribute('data-exp'))-Date.now();
+    el.style.color=t==='expired'?'#ef4444':(ms<600000?'#f97316':'#6b7280');
+  });
+},1000);
+
+function sc_saveSnap(botId,snapId,btn){
+  if(!_jwt||!botId){alert('Select a bot first');return;}
+  if(btn){btn.disabled=true;btn.innerText='Saving\u2026';}
+  sc_api('/api/v1/human/bots/'+botId+'/save-snap/'+snapId,{method:'POST'})
+  .then(function(){if(btn){btn.innerText='\u2713 Saved';btn.style.color='#4ade80';}})
+  .catch(function(e){if(btn){btn.disabled=false;btn.innerText='Save';alert('Save failed: '+e.message);}});
+}
+
+function sc_loadSavedSnaps(botId){
+  var c=document.getElementById('main-bots-content');
+  c.innerHTML='<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">'+
+    '<button class="btn-sm btn-sm-dark" onclick="document.getElementById(\'main-bots-content\').innerHTML=\'Select a bot on the left.\'">\u2190 Back</button>'+
+    '<h3 style="font-size:1rem;font-weight:700;color:#e5e7eb;margin:0">Saved Snaps</h3></div>'+
+    '<div id="saved-snaps-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">'+
+    '<div class="sc-loading">Loading&hellip;</div></div>';
+  sc_api('/api/v1/human/bots/'+botId+'/saved-snaps').then(function(items){
+    var g=document.getElementById('saved-snaps-grid');
+    if(!g)return;
+    if(!items.length){g.innerHTML='<div class="sc-empty" style="grid-column:1/-1">No saved snaps yet. Click Save on any snap to archive it here.</div>';return;}
+    g.innerHTML=items.map(function(s){
+      return'<div style="background:#111;border:1px solid #1f1f1f;border-radius:12px;overflow:hidden">'+
+        (s.image_url?'<img src="'+s.image_url+'" style="width:100%;aspect-ratio:1;object-fit:cover" onerror="this.style.display=\'none\'">':'')+
+        '<div style="padding:8px">'+
+          '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:2px">@'+sc_esc(s.original_sender)+'</div>'+
+          (s.caption?'<div style="font-size:0.75rem;color:#d1d5db;margin-bottom:4px">'+sc_esc(s.caption)+'</div>':'')+
+          '<div style="display:flex;justify-content:space-between;align-items:center">'+
+            '<span style="font-size:0.65rem;color:#4b5563">saved '+sc_timeAgo(s.saved_at)+' ago</span>'+
+            '<button class="btn-sm btn-sm-dark" style="font-size:0.65rem;padding:3px 8px" '+
+              'onclick="var bid=\''+botId+'\',sid=\''+s.id+'\';if(confirm(\'Remove from saved?\'))sc_api(\'/api/v1/human/bots/\'+bid+\'/saved-snaps/\'+sid,{method:\'DELETE\'}).then(function(){sc_loadSavedSnaps(bid);}).catch(function(e){alert(e.message);})">Delete</button>'+
+          '</div>'+
+        '</div>'+
+      '</div>';
+    }).join('');
+  }).catch(function(e){
+    var g=document.getElementById('saved-snaps-grid');
+    if(g)g.innerHTML='<div class="sc-error" style="grid-column:1/-1">'+e.message+'</div>';
+  });
 }
 
 function sc_copyFallback(t){var ta=document.createElement('textarea');ta.value=t;ta.style.cssText='position:fixed;opacity:0';document.body.appendChild(ta);ta.select();try{document.execCommand('copy');}catch(e){}document.body.removeChild(ta);}

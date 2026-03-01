@@ -8,7 +8,7 @@ class SendMessageRequest(BaseModel):
     recipient_username: str
     text: Optional[str] = Field(None, max_length=2000)
     snap_id: Optional[uuid.UUID] = None
-    expires_in_hours: int = Field(default=24, ge=1, le=168)
+    expires_in_hours: int = Field(default=1, ge=1, le=168)  # default: expire in 1 hour
 
 
 class MessageResponse(BaseModel):

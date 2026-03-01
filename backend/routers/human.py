@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from auth import get_current_human, generate_api_key, _hash_key
 from database import get_supabase
 from models.profile import BotProfileResponse, RegisterBotResponse, RegisterBotRequest
-from models.snap import SnapResponse
+from models.snap import SnapResponse, SavedSnapResponse
 from routers.snaps import _enrich_snap
 from routers.stories import _build_story
 from models.story import StoryResponse
@@ -361,3 +361,76 @@ async def human_send_group_message(
     msg["sender_username"] = p.data["username"] if p.data else "unknown"
     msg["from_me"] = True
     return msg
+
+
+# ── Saved Snaps (human-side proxy) ─────────────────────────────────────────
+
+@router.get("/bots/{bot_id}/saved-snaps", response_model=List[SavedSnapResponse])
+async def get_bot_saved_snaps(
+    bot_id: str,
+    human: dict = Depends(get_current_human),
+    db: Client = Depends(get_supabase),
+):
+    """List all snaps saved by this bot (viewable by its human owner)."""
+    _assert_owns(db, human["id"], bot_id)
+    res = (
+        db.table("saved_snaps")
+        .select("*")
+        .eq("bot_id", bot_id)
+        .order("saved_at", desc=True)
+        .execute()
+    )
+    return res.data or []
+
+
+@router.post("/bots/{bot_id}/save-snap/{snap_id}", response_model=SavedSnapResponse, status_code=201)
+async def human_save_snap(
+    bot_id: str,
+    snap_id: str,
+    human: dict = Depends(get_current_human),
+    db: Client = Depends(get_supabase),
+):
+    """Save a snap to a bot's archive on behalf of its human owner."""
+    _assert_owns(db, human["id"], bot_id)
+    snap_res = db.table("snaps").select("*").eq("id", snap_id).single().execute()
+    if not snap_res.data:
+        raise HTTPException(status_code=404, detail="Snap not found")
+    snap = snap_res.data
+
+    # Already saved?
+    existing = (
+        db.table("saved_snaps")
+        .select("*")
+        .eq("bot_id", bot_id)
+        .eq("original_snap_id", snap_id)
+        .execute()
+    )
+    if existing.data:
+        return SavedSnapResponse(**existing.data[0])
+
+    sender = db.table("bot_profiles").select("username").eq("id", snap["sender_id"]).single().execute()
+    sender_name = sender.data["username"] if sender.data else "unknown"
+
+    row = {
+        "bot_id": bot_id,
+        "original_snap_id": snap_id,
+        "image_url": snap["image_url"],
+        "caption": snap.get("caption"),
+        "tags": snap.get("tags", []),
+        "original_sender": sender_name,
+        "is_public": snap.get("is_public", False),
+    }
+    result = db.table("saved_snaps").insert(row).execute()
+    return SavedSnapResponse(**result.data[0])
+
+
+@router.delete("/bots/{bot_id}/saved-snaps/{saved_id}", status_code=204)
+async def delete_bot_saved_snap(
+    bot_id: str,
+    saved_id: str,
+    human: dict = Depends(get_current_human),
+    db: Client = Depends(get_supabase),
+):
+    """Delete a saved snap from a bot's archive."""
+    _assert_owns(db, human["id"], bot_id)
+    db.table("saved_snaps").delete().eq("id", saved_id).eq("bot_id", bot_id).execute()

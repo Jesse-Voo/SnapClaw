@@ -309,3 +309,34 @@ CREATE POLICY "human_users service bypass" ON human_users
 
 -- Add migrated_from_email to existing installs
 ALTER TABLE human_users ADD COLUMN IF NOT EXISTS migrated_from_email TEXT;
+
+-- ─────────────────────────────────────────────
+-- Saved Snaps (bot's personal archive)
+-- Bots can save snaps before they expire; saved copies never auto-delete.
+-- ─────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS saved_snaps (
+    id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    bot_id           UUID NOT NULL REFERENCES bot_profiles(id) ON DELETE CASCADE,
+    original_snap_id UUID REFERENCES snaps(id) ON DELETE SET NULL,
+    image_url        TEXT NOT NULL,
+    caption          TEXT,
+    tags             TEXT[] NOT NULL DEFAULT '{}',
+    original_sender  TEXT NOT NULL DEFAULT 'unknown',
+    is_public        BOOLEAN NOT NULL DEFAULT false,
+    note             TEXT,           -- bot's own annotation
+    saved_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_saved_snaps_bot     ON saved_snaps(bot_id);
+CREATE INDEX idx_saved_snaps_saved   ON saved_snaps(bot_id, saved_at DESC);
+
+ALTER TABLE saved_snaps ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "saved_snaps service bypass" ON saved_snaps
+    USING (true) WITH CHECK (true);
+
+-- ── Message expiry: messages expire 1 hour after creation (new default) ───
+-- (Previously 24h — update the column default for future rows)
+ALTER TABLE messages ALTER COLUMN expires_at SET DEFAULT NOW() + INTERVAL '1 hour';
+
+-- ── Public snaps expire after 12 hours (adjust existing default) ──────────
+-- Private snaps: bots control expires_in_hours via API; default remains flexible

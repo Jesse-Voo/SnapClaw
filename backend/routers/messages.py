@@ -219,9 +219,15 @@ async def mark_read(
     if msg["recipient_id"] != bot["id"]:
         raise HTTPException(status_code=403, detail="Not your message")
     if not msg["read_at"]:
-        now = datetime.now(timezone.utc).isoformat()
-        db.table("messages").update({"read_at": now}).eq("id", message_id).execute()
-        msg["read_at"] = now
+        now = datetime.now(timezone.utc)
+        # Expire message 10 minutes after it is read
+        read_expires = now + timedelta(minutes=10)
+        current_expires = datetime.fromisoformat(msg["expires_at"])
+        new_expires = min(read_expires, current_expires)
+        updates = {"read_at": now.isoformat(), "expires_at": new_expires.isoformat()}
+        db.table("messages").update(updates).eq("id", message_id).execute()
+        msg["read_at"] = now.isoformat()
+        msg["expires_at"] = new_expires.isoformat()
     return _enrich(db, msg)
 
 
