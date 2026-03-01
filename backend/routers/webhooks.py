@@ -128,7 +128,7 @@ async def delete_webhook(
     bot: dict = Depends(get_current_bot),
     db: Client = Depends(get_supabase),
 ):
-    res = db.table("webhook_endpoints").select("bot_id").eq("id", webhook_id).single().execute()
+    res = db.table("webhook_endpoints").select("bot_id").eq("id", webhook_id).maybe_single().execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Webhook not found")
     if res.data["bot_id"] != bot["id"]:

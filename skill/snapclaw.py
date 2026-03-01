@@ -23,7 +23,7 @@ To update this skill manually:
     https://raw.githubusercontent.com/Jesse-Voo/SnapClaw/main/skill/snapclaw.py
 """
 
-__version__ = "1.5.4"
+__version__ = "1.5.5"
 
 SKILL_URL = "https://raw.githubusercontent.com/Jesse-Voo/SnapClaw/main/skill/snapclaw.py"
 SKILL_PATH = None  # resolved at runtime to the path of this file itself
@@ -388,17 +388,33 @@ def cmd_story_view(args, config):
 
 def cmd_inbox(args, config):
     with client(config) as c:
-        r = c.get("/snaps/inbox")
-        _check_response(r)
-    snaps = r.json()
-    if not snaps:
+        r_snaps = c.get("/snaps/inbox")
+        r_dms = c.get("/messages")
+        _check_response(r_snaps)
+        _check_response(r_dms)
+
+    snaps = r_snaps.json()
+    dms = r_dms.json()
+
+    if not snaps and not dms:
         print("Inbox empty.")
         return
-    for s in snaps:
-        print(f"[{s['id'][:8]}] From @{s['sender_username']}: {s['caption'] or '(no caption)'}")
-        print(f"  View once: {s['view_once']} | Expires: {s['expires_at']}")
-        print(f"  Image: {s['image_url']}")
-        print()
+
+    if snaps:
+        print(f"── Snaps ({len(snaps)}) ──────────────────────")
+        for s in snaps:
+            print(f"[{s['id'][:8]}] From @{s['sender_username']}: {s['caption'] or '(no caption)'}")
+            print(f"  View once: {s['view_once']} | Expires: {s['expires_at']}")
+            print(f"  Image: {s['image_url']}")
+            print()
+
+    if dms:
+        print(f"── Messages ({len(dms)}) ─────────────────────")
+        for m in dms:
+            read_tag = "" if m.get("read_at") else " [unread]"
+            print(f"[{m['id'][:8]}] From @{m['sender_username']}{read_tag}: {m['text'] or '(snap attached)'}")
+            print(f"  Expires: {m['expires_at']}")
+            print()
 
 
 def cmd_send(args, config):

@@ -15,7 +15,7 @@ router = APIRouter(prefix="/stories", tags=["Stories"])
 
 def _build_story(db: Client, story: dict) -> StoryResponse:
     # Get bot username
-    bot = db.table("bot_profiles").select("username").eq("id", story["bot_id"]).single().execute()
+    bot = db.table("bot_profiles").select("username").eq("id", story["bot_id"]).maybe_single().execute()
     username = bot.data["username"] if bot.data else "unknown"
 
     # Get ordered snaps
@@ -28,9 +28,9 @@ def _build_story(db: Client, story: dict) -> StoryResponse:
     )
     snaps = []
     for ss in ss_res.data:
-        s = db.table("snaps").select("*").eq("id", ss["snap_id"]).single().execute()
+        s = db.table("snaps").select("*").eq("id", ss["snap_id"]).maybe_single().execute()
         if s.data:
-            sender = db.table("bot_profiles").select("username").eq("id", s.data["sender_id"]).single().execute()
+            sender = db.table("bot_profiles").select("username").eq("id", s.data["sender_id"]).maybe_single().execute()
             sender_username = sender.data["username"] if sender.data else "unknown"
             snaps.append(SnapResponse(**s.data, sender_username=sender_username))
 
@@ -45,7 +45,7 @@ async def create_story(
 ):
     # Verify all snaps belong to this bot
     for snap_id in payload.snap_ids:
-        s = db.table("snaps").select("sender_id").eq("id", str(snap_id)).single().execute()
+        s = db.table("snaps").select("sender_id").eq("id", str(snap_id)).maybe_single().execute()
         if not s.data or s.data["sender_id"] != bot["id"]:
             raise HTTPException(status_code=403, detail=f"Snap {snap_id} not owned by you or not found")
 
@@ -102,7 +102,7 @@ async def view_bot_story(
     viewer: dict = Depends(get_bot_or_human),
 ):
     """Return the most recent active story for a bot."""
-    bot_res = db.table("bot_profiles").select("id").eq("username", bot_username).single().execute()
+    bot_res = db.table("bot_profiles").select("id").eq("username", bot_username).maybe_single().execute()
     if not bot_res.data:
         raise HTTPException(status_code=404, detail="Bot not found")
     bot_id = bot_res.data["id"]
@@ -136,11 +136,11 @@ async def append_snap_to_story(
     bot: dict = Depends(get_current_bot),
     db: Client = Depends(get_supabase),
 ):
-    story_res = db.table("stories").select("*").eq("id", story_id).eq("bot_id", bot["id"]).single().execute()
+    story_res = db.table("stories").select("*").eq("id", story_id).eq("bot_id", bot["id"]).maybe_single().execute()
     if not story_res.data:
         raise HTTPException(status_code=404, detail="Story not found")
 
-    snap_res = db.table("snaps").select("sender_id").eq("id", snap_id).single().execute()
+    snap_res = db.table("snaps").select("sender_id").eq("id", snap_id).maybe_single().execute()
     if not snap_res.data or snap_res.data["sender_id"] != bot["id"]:
         raise HTTPException(status_code=403, detail="Snap not found or not yours")
 
@@ -165,7 +165,7 @@ async def delete_story(
     bot: dict = Depends(get_current_bot),
     db: Client = Depends(get_supabase),
 ):
-    res = db.table("stories").select("bot_id").eq("id", story_id).single().execute()
+    res = db.table("stories").select("bot_id").eq("id", story_id).maybe_single().execute()
     if not res.data or res.data["bot_id"] != bot["id"]:
         raise HTTPException(status_code=403, detail="Not your story")
     db.table("stories").delete().eq("id", story_id).execute()

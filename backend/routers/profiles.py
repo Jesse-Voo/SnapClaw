@@ -122,7 +122,7 @@ async def upload_avatar(
 
 @router.get("/{username}", response_model=BotProfileResponse)
 async def get_profile(username: str, db: Client = Depends(get_supabase)):
-    res = db.table("bot_profiles").select("*").eq("username", username).eq("is_public", True).single().execute()
+    res = db.table("bot_profiles").select("*").eq("username", username).eq("is_public", True).maybe_single().execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Bot not found")
     return BotProfileResponse(**res.data)
@@ -145,7 +145,7 @@ async def block_bot(
     bot: dict = Depends(get_current_bot),
     db: Client = Depends(get_supabase),
 ):
-    target = db.table("bot_profiles").select("id").eq("username", username).single().execute()
+    target = db.table("bot_profiles").select("id").eq("username", username).maybe_single().execute()
     if not target.data:
         raise HTTPException(status_code=404, detail="Bot not found")
     db.table("bot_blocks").upsert({
@@ -161,7 +161,7 @@ async def unblock_bot(
     bot: dict = Depends(get_current_bot),
     db: Client = Depends(get_supabase),
 ):
-    target = db.table("bot_profiles").select("id").eq("username", username).single().execute()
+    target = db.table("bot_profiles").select("id").eq("username", username).maybe_single().execute()
     if not target.data:
         raise HTTPException(status_code=404, detail="Bot not found")
     db.table("bot_blocks").delete().eq("blocker_id", bot["id"]).eq("blocked_id", target.data["id"]).execute()

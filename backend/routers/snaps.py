@@ -205,10 +205,10 @@ async def view_snap(
     db: Client = Depends(get_supabase),
 ):
     now = datetime.now(timezone.utc)
-    res = db.table("snaps").select("*").eq("id", snap_id).single().execute()
+    res = db.table("snaps").select("*").eq("id", snap_id).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Snap not found")
-    snap = res.data
+    snap = res.data[0]
 
     # Check expiry
     expires_at = datetime.fromisoformat(snap["expires_at"])
@@ -245,10 +245,10 @@ async def react_to_snap(
     db: Client = Depends(get_supabase),
 ):
     # Verify snap exists and is accessible
-    res = db.table("snaps").select("id, is_public, recipient_id, expires_at").eq("id", snap_id).single().execute()
+    res = db.table("snaps").select("id, is_public, recipient_id, expires_at").eq("id", snap_id).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Snap not found")
-    snap = res.data
+    snap = res.data[0]
     now_str = datetime.now(timezone.utc).isoformat()
     if snap["expires_at"] < now_str:
         raise HTTPException(status_code=410, detail="Snap has expired")
@@ -264,10 +264,10 @@ async def react_to_snap(
 
 @router.delete("/{snap_id}", status_code=204)
 async def delete_snap(snap_id: str, bot: dict = Depends(get_current_bot), db: Client = Depends(get_supabase)):
-    res = db.table("snaps").select("sender_id, image_url").eq("id", snap_id).single().execute()
-    if not res.data or res.data["sender_id"] != bot["id"]:
+    res = db.table("snaps").select("sender_id, image_url").eq("id", snap_id).execute()
+    if not res.data or res.data[0]["sender_id"] != bot["id"]:
         raise HTTPException(status_code=403, detail="Not your snap")
-    _delete_storage_file(db, res.data["image_url"])
+    _delete_storage_file(db, res.data[0]["image_url"])
     db.table("snaps").delete().eq("id", snap_id).execute()
 
 

@@ -65,7 +65,7 @@ async def rotate_bot_key(
     db: Client = Depends(get_supabase)
 ):
     """Rotate the API key for a bot owned by this human."""
-    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).single().execute()
+    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).maybe_single().execute()
     if not bot_res.data or bot_res.data.get("owner_id") != human["id"]:
         raise HTTPException(status_code=403, detail="Not your bot")
 
@@ -86,7 +86,7 @@ async def human_view_bot_snaps(
     db: Client = Depends(get_supabase),
 ):
     """View snaps sent by this bot."""
-    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).single().execute()
+    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).maybe_single().execute()
     if not bot_res.data or bot_res.data.get("owner_id") != human["id"]:
         raise HTTPException(status_code=403, detail="Not your bot")
 
@@ -102,7 +102,7 @@ async def human_view_bot_inbox(
     db: Client = Depends(get_supabase),
 ):
     """View snaps received by this bot."""
-    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).single().execute()
+    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).maybe_single().execute()
     if not bot_res.data or bot_res.data.get("owner_id") != human["id"]:
         raise HTTPException(status_code=403, detail="Not your bot")
 
@@ -117,7 +117,7 @@ async def human_view_bot_stories(
     db: Client = Depends(get_supabase),
 ):
     """View stories created by this bot."""
-    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).single().execute()
+    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).maybe_single().execute()
     if not bot_res.data or bot_res.data.get("owner_id") != human["id"]:
         raise HTTPException(status_code=403, detail="Not your bot")
 
@@ -140,7 +140,7 @@ async def human_bot_conversations(
     db: Client = Depends(get_supabase),
 ):
     """List unique conversation partners for a bot (messages + private snaps)."""
-    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).single().execute()
+    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).maybe_single().execute()
     if not bot_res.data or bot_res.data.get("owner_id") != human["id"]:
         raise HTTPException(status_code=403, detail="Not your bot")
 
@@ -167,7 +167,7 @@ async def human_bot_conversations(
     # Enrich with profile info and sort by recency
     result = []
     for pid, info in sorted(partners.items(), key=lambda x: x[1]["last_at"], reverse=True):
-        prof = db.table("bot_profiles").select("username,display_name,avatar_url").eq("id", pid).single().execute()
+        prof = db.table("bot_profiles").select("username,display_name,avatar_url").eq("id", pid).maybe_single().execute()
         if prof.data:
             result.append({
                 "bot_id": pid,
@@ -189,7 +189,7 @@ async def human_bot_thread(
     db: Client = Depends(get_supabase),
 ):
     """Get the full message+snap thread between two bots."""
-    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).single().execute()
+    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).maybe_single().execute()
     if not bot_res.data or bot_res.data.get("owner_id") != human["id"]:
         raise HTTPException(status_code=403, detail="Not your bot")
 
@@ -215,7 +215,7 @@ async def human_bot_streaks(
     db: Client = Depends(get_supabase),
 ):
     """Get active streaks for a bot, identified by partner username."""
-    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).single().execute()
+    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).maybe_single().execute()
     if not bot_res.data or bot_res.data.get("owner_id") != human["id"]:
         raise HTTPException(status_code=403, detail="Not your bot")
 
@@ -229,7 +229,7 @@ async def human_bot_streaks(
     result = []
     for s in (res.data or []):
         partner_id = s["bot_b_id"] if s["bot_a_id"] == bot_id else s["bot_a_id"]
-        prof = db.table("bot_profiles").select("username").eq("id", partner_id).single().execute()
+        prof = db.table("bot_profiles").select("username").eq("id", partner_id).maybe_single().execute()
         username = prof.data["username"] if prof.data else "unknown"
         result.append({
             "partner_id": partner_id,
@@ -246,7 +246,7 @@ async def human_bot_streaks(
 # of a bot owned by the authenticated human.
 
 def _assert_owns(db, human_id, bot_id):
-    r = db.table("bot_profiles").select("owner_id").eq("id", bot_id).single().execute()
+    r = db.table("bot_profiles").select("owner_id").eq("id", bot_id).maybe_single().execute()
     if not r.data or r.data.get("owner_id") != human_id:
         raise HTTPException(status_code=403, detail="Not your bot")
 
@@ -267,14 +267,14 @@ async def human_list_groups(
     mem = db.table("group_members").select("group_id").eq("bot_id", bot_id).execute()
     result = []
     for m in (mem.data or []):
-        g = db.table("group_chats").select("*").eq("id", m["group_id"]).single().execute()
+        g = db.table("group_chats").select("*").eq("id", m["group_id"]).maybe_single().execute()
         if not g.data:
             continue
         members = db.table("group_members").select("bot_id").eq("group_id", g.data["id"]).execute()
         member_ids = [x["bot_id"] for x in (members.data or [])]
         usernames = []
         for mid in member_ids:
-            p = db.table("bot_profiles").select("username").eq("id", mid).single().execute()
+            p = db.table("bot_profiles").select("username").eq("id", mid).maybe_single().execute()
             if p.data:
                 usernames.append(p.data["username"])
         latest = (
@@ -327,7 +327,7 @@ async def human_group_messages(
     )
     result = []
     for m in (msgs.data or []):
-        p = db.table("bot_profiles").select("username,avatar_url").eq("id", m["sender_id"]).single().execute()
+        p = db.table("bot_profiles").select("username,avatar_url").eq("id", m["sender_id"]).maybe_single().execute()
         m["sender_username"] = p.data["username"] if p.data else "unknown"
         m["sender_avatar_url"] = p.data.get("avatar_url") if p.data else None
         m["from_me"] = m["sender_id"] == bot_id
@@ -357,7 +357,7 @@ async def human_send_group_message(
         "text": text,
         "expires_at": expires_at,
     }).execute().data[0]
-    p = db.table("bot_profiles").select("username").eq("id", bot_id).single().execute()
+    p = db.table("bot_profiles").select("username").eq("id", bot_id).maybe_single().execute()
     msg["sender_username"] = p.data["username"] if p.data else "unknown"
     msg["from_me"] = True
     return msg

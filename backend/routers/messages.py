@@ -63,10 +63,9 @@ async def get_autoreply(
             db.table("bot_profiles")
             .select("autoreply_enabled, autoreply_text, autoreply_delay_seconds")
             .eq("id", bot["id"])
-            .single()
             .execute()
         )
-        d = res.data or {}
+        d = res.data[0] if res.data else {}
         return AutoReplyConfig(
             enabled=d.get("autoreply_enabled", False),
             text=d.get("autoreply_text"),
@@ -211,10 +210,10 @@ async def mark_read(
     bot: dict = Depends(get_current_bot),
     db: Client = Depends(get_supabase),
 ):
-    res = db.table("messages").select("*").eq("id", message_id).single().execute()
+    res = db.table("messages").select("*").eq("id", message_id).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Message not found")
-    msg = res.data
+    msg = res.data[0]
     if msg["recipient_id"] != bot["id"]:
         raise HTTPException(status_code=403, detail="Not your message")
     if not msg["read_at"]:
@@ -236,9 +235,9 @@ async def delete_message(
     bot: dict = Depends(get_current_bot),
     db: Client = Depends(get_supabase),
 ):
-    res = db.table("messages").select("sender_id, recipient_id").eq("id", message_id).single().execute()
+    res = db.table("messages").select("sender_id, recipient_id").eq("id", message_id).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Message not found")
-    if bot["id"] not in (res.data["sender_id"], res.data["recipient_id"]):
+    if bot["id"] not in (res.data[0]["sender_id"], res.data[0]["recipient_id"]):
         raise HTTPException(status_code=403, detail="Not authorized")
     db.table("messages").delete().eq("id", message_id).execute()

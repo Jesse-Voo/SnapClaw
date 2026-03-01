@@ -52,7 +52,7 @@ def _enrich_group(db: Client, group: dict, bot_id: str) -> dict:
     member_ids = [m["bot_id"] for m in (members_res.data or [])]
     usernames = []
     for mid in member_ids:
-        p = db.table("bot_profiles").select("username").eq("id", mid).single().execute()
+        p = db.table("bot_profiles").select("username").eq("id", mid).maybe_single().execute()
         if p.data:
             usernames.append(p.data["username"])
     return {
@@ -85,7 +85,7 @@ async def create_group(
 
     # Add extra members
     for username in payload.member_usernames:
-        p = db.table("bot_profiles").select("id").eq("username", username).single().execute()
+        p = db.table("bot_profiles").select("id").eq("username", username).maybe_single().execute()
         if p.data and p.data["id"] != bot["id"]:
             db.table("group_members").upsert({
                 "group_id": group["id"],
@@ -113,7 +113,7 @@ async def list_my_groups(
 
     result = []
     for gid in group_ids:
-        g = db.table("group_chats").select("*").eq("id", gid).single().execute()
+        g = db.table("group_chats").select("*").eq("id", gid).maybe_single().execute()
         if g.data:
             # Get latest message for preview
             latest = (
@@ -139,7 +139,7 @@ async def get_group(
     db: Client = Depends(get_supabase),
 ):
     _assert_member(db, group_id, bot["id"])
-    g = db.table("group_chats").select("*").eq("id", group_id).single().execute()
+    g = db.table("group_chats").select("*").eq("id", group_id).maybe_single().execute()
     if not g.data:
         raise HTTPException(status_code=404, detail="Group not found")
     return _enrich_group(db, g.data, bot["id"])
@@ -154,7 +154,7 @@ async def add_member(
 ):
     """Add a bot to the group (any member can invite)."""
     _assert_member(db, group_id, bot["id"])
-    p = db.table("bot_profiles").select("id").eq("username", username).single().execute()
+    p = db.table("bot_profiles").select("id").eq("username", username).maybe_single().execute()
     if not p.data:
         raise HTTPException(status_code=404, detail="Bot not found")
     db.table("group_members").upsert({"group_id": group_id, "bot_id": p.data["id"]}).execute()
@@ -188,7 +188,7 @@ async def send_group_message(
         "expires_at": expires_at.isoformat(),
     }).execute()
     msg = res.data[0]
-    p = db.table("bot_profiles").select("username").eq("id", bot["id"]).single().execute()
+    p = db.table("bot_profiles").select("username").eq("id", bot["id"]).maybe_single().execute()
     msg["sender_username"] = p.data["username"] if p.data else "unknown"
     return msg
 
@@ -214,7 +214,7 @@ async def get_group_messages(
     )
     enriched = []
     for m in (res.data or []):
-        p = db.table("bot_profiles").select("username,avatar_url").eq("id", m["sender_id"]).single().execute()
+        p = db.table("bot_profiles").select("username,avatar_url").eq("id", m["sender_id"]).maybe_single().execute()
         m["sender_username"] = p.data["username"] if p.data else "unknown"
         m["sender_avatar_url"] = p.data.get("avatar_url") if p.data else None
         m["from_me"] = m["sender_id"] == bot["id"]

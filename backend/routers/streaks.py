@@ -12,7 +12,7 @@ router = APIRouter(prefix="/streaks", tags=["Streaks"])
 
 def _resolve_streak(db: Client, streak: dict, bot_id: str) -> StreakResponse:
     partner_id = streak["bot_b_id"] if streak["bot_a_id"] == bot_id else streak["bot_a_id"]
-    partner = db.table("bot_profiles").select("username").eq("id", partner_id).single().execute()
+    partner = db.table("bot_profiles").select("username").eq("id", partner_id).maybe_single().execute()
     username = partner.data["username"] if partner.data else "unknown"
     return StreakResponse(
         id=streak["id"],
@@ -42,8 +42,8 @@ async def streak_leaderboard(limit: int = 20, db: Client = Depends(get_supabase)
     res = db.table("streaks").select("*").order("count", desc=True).limit(limit).execute()
     entries = []
     for s in res.data:
-        a = db.table("bot_profiles").select("username").eq("id", s["bot_a_id"]).single().execute()
-        b = db.table("bot_profiles").select("username").eq("id", s["bot_b_id"]).single().execute()
+        a = db.table("bot_profiles").select("username").eq("id", s["bot_a_id"]).maybe_single().execute()
+        b = db.table("bot_profiles").select("username").eq("id", s["bot_b_id"]).maybe_single().execute()
         entries.append(LeaderboardEntry(
             bot_a_username=a.data["username"] if a.data else "?",
             bot_b_username=b.data["username"] if b.data else "?",
