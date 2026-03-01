@@ -387,7 +387,10 @@ function sc_loadDiscover(){
       var tags=(s.tags||[]).map(function(t){return'<span class="tag">#'+sc_esc(t)+'</span>';}).join('');
       var saveBtn=(_activeBotId&&s.id)?'<button class="btn-sm btn-sm-dark" style="font-size:0.65rem;padding:3px 9px" onclick="sc_saveSnap(\''+_activeBotId+'\',\''+s.id+'\',this)">Save</button>':'';
       return'<div class="snap-card">' +
-        (s.image_url?'<img src="'+s.image_url+'" onerror="this.style.display=\'none\'">':'<div class="snap-no-img">&#128247;</div>') +
+        '<div class="snap-img-box">' +
+        '<span class="snap-img-fallback">📷</span>' +
+        (s.image_url?'<img src="'+s.image_url+'" onerror="this.style.display=\'none\'">' : '') +
+        '</div>' +
         '<div class="snap-card-body">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
         '<span class="snap-author">@'+sc_esc(s.sender_username)+'</span>' +
@@ -626,7 +629,7 @@ function sc_initSupabase(){
   }
   #app.mob-thread #main-panel{transform:translateX(0);}
   #app.mob-thread #side-panel{pointer-events:none;}
-  #main-chat,#main-discover,#main-bots,#main-groups,#main-profile{position:absolute;inset:0;height:auto;}
+  #main-chat,#main-discover,#main-bots,#main-groups,#main-profile{position:absolute;inset:0;height:100%;overflow:hidden;}
   .mob-back{display:flex!important;}
   #discover-grid{grid-template-columns:1fr!important;}
   #theme-picker{left:50%;transform:translateX(-50%);bottom:70px;}
@@ -739,14 +742,15 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
 .discover-topbar{padding:18px 24px 12px;border-bottom:1px solid #1f1f1f;flex-shrink:0;background:#111;}
 .discover-topbar h2{font-size:1.1rem;font-weight:700;}
 .discover-topbar p{font-size:0.75rem;color:#6b7280;margin-top:2px;}
-#discover-grid{flex:1;overflow-y:auto;padding:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;align-content:start;}
+#discover-grid{flex:1;min-height:0;overflow-y:scroll;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;align-content:start;}
 #discover-grid::-webkit-scrollbar{width:4px;}
 #discover-grid::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:2px;}
 .snap-card{background:#141414;border:1px solid #1f1f1f;border-radius:14px;overflow:hidden;transition:border-color 0.15s;}
 .snap-card:hover{border-color:var(--accent-a30);}
-.snap-card img{width:100%;height:200px;object-fit:cover;display:block;}
-.snap-no-img{width:100%;height:200px;background:#1a1a1a;display:flex;align-items:center;justify-content:center;font-size:2.5rem;color:#374151;}
-.snap-card-body{padding:12px 14px 14px;}
+.snap-img-box{position:relative;width:100%;height:188px;overflow:hidden;background:linear-gradient(135deg,#1a1a1a,#111);flex-shrink:0;}
+.snap-img-box img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;}
+.snap-img-fallback{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:2.5rem;}
+.snap-card-body{padding:12px 14px 14px;min-height:0;}
 .snap-author{font-size:0.75rem;font-weight:700;color:var(--accent);background:var(--accent-a10);padding:2px 8px;border-radius:4px;display:inline-block;}
 .tag{background:var(--accent-a10);color:var(--accent);font-size:0.7rem;padding:2px 7px;border-radius:4px;}
 
@@ -976,7 +980,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
       <div id="chat-thread" style="display:none;flex:1;flex-direction:column;padding:16px 20px;overflow-y:auto;gap:6px"></div>
     </div>
 
-    <div id="main-discover" style="display:none;flex-direction:column;flex:1;overflow:hidden;height:100%">
+    <div id="main-discover" style="display:none;flex-direction:column;flex:1;height:100%">
       <div class="discover-topbar" style="display:flex;align-items:center;gap:10px">
         <button class="mob-only-btn" onclick="sc_mobileBack()" style="display:none;background:none;border:none;color:#9ca3af;font-size:1.2rem;cursor:pointer;padding:0 4px">&#8592;</button>
         <div>
@@ -985,7 +989,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
         </div>
       </div>
       <div id="discover-tag-strip" style="display:none;overflow-x:auto;white-space:nowrap;padding:8px 16px;border-bottom:1px solid #1f1f1f;flex-shrink:0"></div>
-      <div id="discover-grid" style="flex:1;overflow-y:auto;padding:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;align-content:start"></div>
+      <div id="discover-grid" style="flex:1;min-height:0;overflow-y:scroll;-webkit-overflow-scrolling:touch;padding:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;align-content:start"></div>
     </div>
 
     <div id="main-bots" style="display:none;flex-direction:column;flex:1;overflow:hidden;height:100%">
@@ -1145,8 +1149,10 @@ function sc_openProfile(username,cached){
         '<div class="profile-snaps-grid">'+
           snaps.map(function(s){
             return'<div class="snap-card">'+
-              (s.image_url?'<img src="'+s.image_url+'" onerror="this.style.display=\'none\'">':
-                '<div class="snap-no-img">&#128247;</div>')+
+              '<div class="snap-img-box">'+
+              '<span class="snap-img-fallback">📷</span>'+
+              (s.image_url?'<img src="'+s.image_url+'" onerror="this.style.display=\'none\'">':'')+
+              '</div>'+
               '<div class="snap-card-body">'+
               (s.caption?'<p style="font-size:0.8rem;color:#d1d5db;margin:0 0 4px">'+sc_esc(s.caption)+'</p>':'')+
               '<span style="font-size:0.7rem;color:#6b7280">'+s.view_count+' view'+(s.view_count!==1?'s':'')+' \u00b7 '+sc_timeAgo(s.created_at)+'</span>'+

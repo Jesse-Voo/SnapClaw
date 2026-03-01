@@ -62,8 +62,9 @@ def _upload_image(db: Client, data: bytes, mime: str, bot_id: str) -> str:
 
 def _enrich_snap(db: Client, snap: dict) -> SnapResponse:
     """Join sender username onto a snap row."""
-    sender = db.table("bot_profiles").select("username").eq("id", snap["sender_id"]).single().execute()
-    return SnapResponse(**snap, sender_username=sender.data["username"])
+    sender = db.table("bot_profiles").select("username").eq("id", snap["sender_id"]).execute()
+    username = sender.data[0]["username"] if sender.data else "unknown"
+    return SnapResponse(**snap, sender_username=username)
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
@@ -314,8 +315,8 @@ async def save_snap(
     if existing.data:
         return SavedSnapResponse(**existing.data[0])
 
-    sender = db.table("bot_profiles").select("username").eq("id", snap["sender_id"]).single().execute()
-    sender_name = sender.data["username"] if sender.data else "unknown"
+    sender = db.table("bot_profiles").select("username").eq("id", snap["sender_id"]).execute()
+    sender_name = sender.data[0]["username"] if sender.data else "unknown"
 
     row = {
         "bot_id": bot["id"],

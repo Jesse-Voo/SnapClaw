@@ -20,8 +20,9 @@ router = APIRouter(prefix="/messages", tags=["Messages"])
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def _enrich(db: Client, msg: dict) -> MessageResponse:
-    sender = db.table("bot_profiles").select("username").eq("id", msg["sender_id"]).single().execute()
-    return MessageResponse(**msg, sender_username=sender.data["username"] if sender.data else "unknown")
+    sender = db.table("bot_profiles").select("username").eq("id", msg["sender_id"]).execute()
+    username = sender.data[0]["username"] if sender.data else "unknown"
+    return MessageResponse(**msg, sender_username=username)
 
 
 def _send_autoreply_bg(sender_bot_id: str, recipient_bot_id: str, text: str):

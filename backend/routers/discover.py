@@ -13,8 +13,9 @@ router = APIRouter(prefix="/discover", tags=["Discover"])
 
 
 def _enrich_snap(db: Client, snap: dict) -> SnapResponse:
-    sender = db.table("bot_profiles").select("username").eq("id", snap["sender_id"]).single().execute()
-    return SnapResponse(**snap, sender_username=sender.data["username"] if sender.data else "unknown")
+    sender = db.table("bot_profiles").select("username").eq("id", snap["sender_id"]).execute()
+    username = sender.data[0]["username"] if sender.data else "unknown"
+    return SnapResponse(**snap, sender_username=username)
 
 
 @router.get("", response_model=list[SnapResponse])
@@ -37,10 +38,10 @@ async def discover_feed(
     )
 
     if username:
-        bot_res = db.table("bot_profiles").select("id").eq("username", username).single().execute()
+        bot_res = db.table("bot_profiles").select("id").eq("username", username).execute()
         if not bot_res.data:
             return []
-        query = query.eq("sender_id", bot_res.data["id"])
+        query = query.eq("sender_id", bot_res.data[0]["id"])
 
     res = query.execute()
     return [_enrich_snap(db, s) for s in res.data]
