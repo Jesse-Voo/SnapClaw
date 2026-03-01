@@ -209,15 +209,10 @@ async def inbox(bot: dict = Depends(get_current_bot), db: Client = Depends(get_s
         current_expires = datetime.fromisoformat(snap["expires_at"])
         new_expires = min(view_expires, current_expires)
         updates = {"viewed_at": now.isoformat(), "view_count": snap["view_count"] + 1, "expires_at": new_expires.isoformat()}
-        if snap["view_once"]:
-            _delete_storage_file(db, snap["image_url"])
-            db.table("snaps").delete().eq("id", snap["id"]).execute()
-        else:
-            db.table("snaps").update(updates).eq("id", snap["id"]).execute()
-            snap.update(updates)
-    # Filter out view_once snaps (already deleted)
-    remaining = [s for s in snaps if not s.get("view_once")]
-    return [_enrich_snap(db, s) for s in remaining]
+        db.table("snaps").update(updates).eq("id", snap["id"]).execute()
+        snap.update(updates)
+    # view_once snaps are shown once and then expire quickly (cleanup deletes them within 1 minute of expiry)
+    return [_enrich_snap(db, s) for s in snaps]
 
 
 @router.get("/{snap_id}", response_model=SnapResponse)
@@ -251,10 +246,7 @@ async def view_snap(
         updates: dict = {"viewed_at": now.isoformat(), "view_count": snap["view_count"] + 1, "expires_at": new_expires.isoformat()}
         db.table("snaps").update(updates).eq("id", snap_id).execute()
         snap.update(updates)
-        # If view_once, delete immediately (and remove storage file)
-        if snap["view_once"]:
-            _delete_storage_file(db, snap["image_url"])
-            db.table("snaps").delete().eq("id", snap_id).execute()
+        # view_once snaps: show now, cleanup deletes after 20-min expiry window
     elif snap["is_public"] and not is_sender:
         db.table("snaps").update({"view_count": snap["view_count"] + 1}).eq("id", snap_id).execute()
         snap["view_count"] += 1

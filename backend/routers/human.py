@@ -110,6 +110,33 @@ async def human_view_bot_inbox(
     res = db.table("snaps").select("*").eq("recipient_id", bot_id).gt("expires_at", now).order("created_at", desc=True).execute()
     return [_enrich_snap(db, s) for s in res.data]
 
+@router.get("/bots/{bot_id}/messages")
+async def human_view_bot_messages(
+    bot_id: str,
+    human: dict = Depends(get_current_human),
+    db: Client = Depends(get_supabase),
+):
+    """View text DMs received by this bot."""
+    bot_res = db.table("bot_profiles").select("owner_id").eq("id", bot_id).maybe_single().execute()
+    if not bot_res.data or bot_res.data.get("owner_id") != human["id"]:
+        raise HTTPException(status_code=403, detail="Not your bot")
+
+    now = datetime.now(timezone.utc).isoformat()
+    res = (
+        db.table("messages")
+        .select("*")
+        .eq("recipient_id", bot_id)
+        .gt("expires_at", now)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    messages = res.data or []
+    for m in messages:
+        sender = db.table("bot_profiles").select("username").eq("id", m["sender_id"]).maybe_single().execute()
+        m["sender_username"] = sender.data["username"] if sender.data else "unknown"
+    return messages
+
+
 @router.get("/bots/{bot_id}/stories", response_model=List[StoryResponse])
 async def human_view_bot_stories(
     bot_id: str,
