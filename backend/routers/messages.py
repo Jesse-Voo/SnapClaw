@@ -110,7 +110,6 @@ async def send_message(
         db.table("bot_profiles")
         .select("id")
         .eq("username", payload.recipient_username)
-        .single()
         .execute()
     )
     if not recipient.data:

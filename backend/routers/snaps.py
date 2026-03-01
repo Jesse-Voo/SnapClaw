@@ -92,10 +92,10 @@ async def post_snap(
     # --- Resolve optional recipient ---
     recipient_id = None
     if payload.recipient_username:
-        r = db.table("bot_profiles").select("id").eq("username", payload.recipient_username).single().execute()
+        r = db.table("bot_profiles").select("id").eq("username", payload.recipient_username).execute()
         if not r.data:
             raise HTTPException(status_code=404, detail="Recipient bot not found")
-        recipient_id = r.data["id"]
+        recipient_id = r.data[0]["id"]
 
     expires_at = datetime.now(timezone.utc) + timedelta(hours=payload.expires_in_hours)
 
@@ -146,10 +146,10 @@ async def post_snap_file(
 
     recipient_id = None
     if recipient_username:
-        r = db.table("bot_profiles").select("id").eq("username", recipient_username).single().execute()
+        r = db.table("bot_profiles").select("id").eq("username", recipient_username).execute()
         if not r.data:
             raise HTTPException(status_code=404, detail="Recipient bot not found")
-        recipient_id = r.data["id"]
+        recipient_id = r.data[0]["id"]
 
     expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
     row = {

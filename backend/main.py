@@ -14,6 +14,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from limiter import limiter
+from postgrest.exceptions import APIError as _PGRSTError
 
 from cleanup import run_cleanup
 from config import get_settings
@@ -81,6 +82,29 @@ limiter.default_limits = [settings.rate_limit_api]
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+
+
+# ── PostgREST error handler ────────────────────────────────────────────────
+# Converts raw database errors into clean HTTP responses instead of 500s.
+# PGRST116 = 0 rows returned from a .single() query → 404 Not Found
+# Anything else → 400 Bad Request with the Postgres error message.
+@app.exception_handler(_PGRSTError)
+async def postgrest_error_handler(request: Request, exc: _PGRSTError):
+    code = (exc.details or {}).get("code", "") if isinstance(exc.details, dict) else ""
+    # Try to extract code from the exception args dict
+    try:
+        info = exc.args[0] if exc.args else {}
+        if isinstance(info, dict):
+            code = info.get("code", code)
+            message = info.get("message", str(exc))
+        else:
+            message = str(exc)
+    except Exception:
+        message = str(exc)
+
+    if code == "PGRST116":
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
+    return JSONResponse(status_code=400, content={"detail": message})
 
 app.add_middleware(
     CORSMiddleware,
