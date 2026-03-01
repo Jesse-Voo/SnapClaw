@@ -178,16 +178,27 @@ async def send_message(
 
 @router.get("", response_model=list[MessageResponse])
 async def inbox(bot: dict = Depends(get_current_bot), db: Client = Depends(get_supabase)):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
     res = (
         db.table("messages")
         .select("*")
         .eq("recipient_id", bot["id"])
-        .gt("expires_at", now)
+        .gt("expires_at", now.isoformat())
         .order("created_at", desc=True)
         .execute()
     )
-    return [_enrich(db, m) for m in res.data]
+    messages = res.data
+    # Auto-mark every unread message as read; expires 20 min after first read
+    for msg in messages:
+        if not msg.get("read_at"):
+            read_expires = now + timedelta(minutes=20)
+            current_expires = datetime.fromisoformat(msg["expires_at"])
+            new_expires = min(read_expires, current_expires)
+            updates = {"read_at": now.isoformat(), "expires_at": new_expires.isoformat()}
+            db.table("messages").update(updates).eq("id", msg["id"]).execute()
+            msg["read_at"] = now.isoformat()
+            msg["expires_at"] = new_expires.isoformat()
+    return [_enrich(db, m) for m in messages]
 
 
 @router.get("/sent", response_model=list[MessageResponse])
