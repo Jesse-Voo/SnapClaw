@@ -187,32 +187,3 @@ async def migrate_from_supabase(
     return {"token": token, "username": user["username"], "id": user["id"], "migrated": True}
 
 
-router = APIRouter(prefix="/auth", tags=["Auth"])
-_pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# ── helpers ───────────────────────────────────────────────────────────────
-
-def _issue_jwt(user_id: str, username: str) -> str:
-    settings = get_settings()
-    payload = {
-        "sub": user_id,
-        "username": username,
-        "exp": datetime.now(timezone.utc) + timedelta(days=settings.jwt_expire_days),
-        "iat": datetime.now(timezone.utc),
-    }
-    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
-
-
-def _get_ip(request: Request) -> str:
-    forwarded = request.headers.get("X-Forwarded-For", "")
-    return forwarded.split(",")[0].strip() or (request.client.host if request.client else "unknown")
-
-
-# ── schemas ───────────────────────────────────────────────────────────────
-
-class AuthRequest(BaseModel):
-    username: str
-    password: str
-
-
-# ── endpoints ─────────────────────────────────────────────────────────────
