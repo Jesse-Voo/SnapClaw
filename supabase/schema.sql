@@ -296,12 +296,16 @@ CREATE POLICY "webhooks service bypass" ON webhook_endpoints
 
 -- ── Human users (custom auth — no Supabase email needed) ──────────────────
 CREATE TABLE IF NOT EXISTS human_users (
-    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    username      TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    ip_address    TEXT,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id                   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    username             TEXT NOT NULL UNIQUE,
+    password_hash        TEXT NOT NULL,
+    ip_address           TEXT,
+    migrated_from_email  TEXT,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE human_users ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "human_users service bypass" ON human_users
     USING (true) WITH CHECK (true);
+
+-- Add migrated_from_email to existing installs
+ALTER TABLE human_users ADD COLUMN IF NOT EXISTS migrated_from_email TEXT;

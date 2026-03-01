@@ -54,6 +54,12 @@ function sc_api(path,opts){
   if(_jwt)h['Authorization']='Bearer '+_jwt;
   opts.headers=h;
   return fetch(path,opts).then(function(r){
+    if(r.status===401&&_jwt){
+      // Session expired — clear and return to login
+      sc_doLogout();
+      sc_authMsg('Your session expired. Please log in again.');
+      return r.json().catch(function(){return{detail:'Session expired'};}).then(function(e){throw new Error(e.detail||'Session expired');});
+    }
     if(!r.ok)return r.json().catch(function(){return{detail:'Error'};}).then(function(e){throw new Error(e.detail||'Error');});
     return r.json();
   });
@@ -96,6 +102,48 @@ function sc_doLogout(){
   document.getElementById('auth-overlay').style.display='flex';
   document.getElementById('login-username').value='';
   document.getElementById('login-pass').value='';
+}
+
+function sc_showMigrate(){
+  document.getElementById('migrate-box').style.display='block';
+  document.getElementById('mig-email').focus();
+  // Ensure Supabase client is ready for migration
+  if(!_supabase&&typeof window.supabase!=='undefined'){
+    fetch('/api/v1/config').then(function(r){return r.ok?r.json():null;}).then(function(cfg){
+      if(cfg)_supabase=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+    }).catch(function(){});
+  }
+}
+function sc_hideMigrate(){
+  document.getElementById('migrate-box').style.display='none';
+}
+function sc_doMigrate(){
+  if(!_supabase){
+    var e2=document.getElementById('mig-error');e2.innerText='Still connecting to Supabase, please wait…';e2.style.display='block';return;
+  }
+  var email=document.getElementById('mig-email').value.trim();
+  var oldpass=document.getElementById('mig-oldpass').value;
+  var newuser=document.getElementById('mig-username').value.trim().toLowerCase();
+  var newpass=document.getElementById('mig-newpass').value;
+  if(!email||!oldpass||!newuser||!newpass){
+    var e2=document.getElementById('mig-error');e2.innerText='Fill in all fields.';e2.style.display='block';return;
+  }
+  var e2=document.getElementById('mig-error'),msg=document.getElementById('mig-msg');
+  e2.style.display='none';msg.innerText='Verifying old account…';msg.style.display='block';
+  _supabase.auth.signInWithPassword({email:email,password:oldpass}).then(function(r){
+    if(r.error){msg.style.display='none';e2.innerText=r.error.message;e2.style.display='block';return;}
+    var supaToken=r.data.session.access_token;
+    msg.innerText='Migrating…';
+    fetch('/api/v1/auth/migrate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({supabase_token:supaToken,username:newuser,password:newpass})})
+    .then(function(res){return res.json().then(function(d){return{ok:res.ok,d:d};});})
+    .then(function(res){
+      if(!res.ok){msg.style.display='none';e2.innerText=res.d.detail||'Migration failed';e2.style.display='block';return;}
+      msg.style.display='none';
+      sc_hideMigrate();
+      sc_loginOk(res.d);
+    }).catch(function(err){msg.style.display='none';e2.innerText='Migration failed: '+err.message;e2.style.display='block';});
+  }).catch(function(err){msg.style.display='none';e2.innerText='Login failed: '+err.message;e2.style.display='block';});
 }
 
 function sc_authError(msg){
@@ -717,6 +765,25 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Ro
     <div class="auth-discover-link">
       No account? <a onclick="sc_guestDiscover()">Browse Discover &rarr;</a>
     </div>
+    <div class="auth-discover-link" style="margin-top:6px">
+      Had an old email account? <a onclick="sc_showMigrate()">Migrate it &rarr;</a>
+    </div>
+  </div>
+
+  <!-- Migration panel (hidden by default) -->
+  <div id="migrate-box" class="auth-box" style="display:none;margin-top:12px">
+    <h2 style="font-size:1rem;margin-bottom:8px">Migrate email account</h2>
+    <p style="font-size:0.78rem;color:#9ca3af;margin-bottom:12px">Enter your old email &amp; password, then choose a new username and password for this account.</p>
+    <input type="email"    id="mig-email"    class="auth-input" placeholder="Old email">
+    <input type="password" id="mig-oldpass"  class="auth-input" placeholder="Old password">
+    <input type="text"     id="mig-username" class="auth-input" placeholder="New username">
+    <input type="password" id="mig-newpass"  class="auth-input" placeholder="New password (min 6 chars)" onkeydown="if(event.key==='Enter')sc_doMigrate()">
+    <div class="auth-btn-row">
+      <button class="btn-primary"   onclick="sc_doMigrate()">Migrate</button>
+      <button class="btn-secondary" onclick="sc_hideMigrate()">Cancel</button>
+    </div>
+    <div id="mig-error" class="auth-error"></div>
+    <div id="mig-msg"   class="auth-msg"></div>
   </div>
 </div>
 
